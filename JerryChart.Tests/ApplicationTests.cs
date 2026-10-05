@@ -177,11 +177,11 @@ public sealed class ApplicationTests
         var summaryHtml = await web.GetStringAsync("/", cancellationToken);
         Assert.Contains("Jerry no reply summary", summaryHtml);
         Assert.Contains("Total Jerry no replies", summaryHtml);
-        Assert.Contains("Replies to the right Jerry", summaryHtml);
-        Assert.Contains("Replies to the wrong Jerry", summaryHtml);
+        Assert.Contains("\u2937 the right Jerry", WebUtility.HtmlDecode(summaryHtml));
+        Assert.Contains("\u2937 the wrong Jerry", WebUtility.HtmlDecode(summaryHtml));
         Assert.IsTrue(Regex.IsMatch(summaryHtml, @"Total Jerry no replies</th><td[^>]*>5</td>"));
-        Assert.IsTrue(Regex.IsMatch(summaryHtml, @"Replies to the right Jerry</th><td[^>]*>2</td>"));
-        Assert.IsTrue(Regex.IsMatch(summaryHtml, @"Replies to the wrong Jerry</th><td[^>]*>3</td>"));
+        Assert.IsTrue(Regex.IsMatch(WebUtility.HtmlDecode(summaryHtml), "\u2937 the right Jerry</th><td[^>]*>2</td>"));
+        Assert.IsTrue(Regex.IsMatch(WebUtility.HtmlDecode(summaryHtml), "\u2937 the wrong Jerry</th><td[^>]*>3</td>"));
         await VerifyTopReplyAuthorsAsync(api, connectionString, cancellationToken);
         var rankedHtml = await web.GetStringAsync("/", cancellationToken);
         Assert.Contains("Top 10 users telling Jerry \"No\"", WebUtility.HtmlDecode(rankedHtml));

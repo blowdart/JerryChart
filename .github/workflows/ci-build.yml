@@ -1,0 +1,99 @@
+name: CI Build
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+env:
+  DOTNET_CLI_TELEMETRY_OPTOUT: "1"
+  DOTNET_NOLOGO: "1"
+  NEXT_TELEMETRY_DISABLED: "1"
+
+jobs:
+  dotnet:
+    name: .NET build and tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up .NET
+        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          dotnet-version: "10.0.x"
+
+      - name: Set up Node.js for Aspire frontend integration
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: jerrychart-web/package-lock.json
+
+      - name: Verify Docker
+        run: docker info
+
+      - name: Restore
+        run: dotnet restore JerryChart.sln
+
+      - name: Build
+        run: dotnet build JerryChart.sln --configuration Release --no-restore -warnaserror
+
+      - name: Run Microsoft.Testing.Platform tests
+        run: dotnet test --solution JerryChart.sln --configuration Release --no-build --report-trx
+
+      - name: Preserve test results and diagnostics
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: dotnet-test-results
+          path: |
+            **/TestResults/**
+            **/test-results/**
+          if-no-files-found: warn
+          retention-days: 14
+
+  frontend:
+    name: Frontend checks and build
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: jerrychart-web
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: jerrychart-web/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Type-check
+        run: npx tsc --noEmit --incremental false
+
+      - name: Test
+        run: node --test --test-reporter=junit --test-reporter-destination=frontend-tests.xml tests/*.test.cjs
+
+      - name: Build
+        run: npm run build
+
+      - name: Preserve test results
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: frontend-test-results
+          path: jerrychart-web/frontend-tests.xml
+          if-no-files-found: warn
+          retention-days: 14

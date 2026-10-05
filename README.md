@@ -730,6 +730,16 @@ JavaScript, a UTC timestamp is displayed instead.
 
 ## Packages and testing
 
+The **CI Build** GitHub Actions workflow runs on every push to any branch and
+on pull requests. Separate Ubuntu jobs build .NET 10 and run all
+Microsoft.Testing.Platform tests (including isolated Docker/MySQL and Next.js
+integration), and install, lint, type-check, test, and production-build the
+frontend with Node.js 22. The monitor is excluded from integration startup, so
+CI needs no archive API key and does not contact the metered archive.
+TRX/diagnostic artifacts and frontend JUnit results are retained for 14 days,
+including failed runs. Workflow permissions are read-only, and action versions
+are pinned to immutable commits.
+
 NuGet Central Package Management is enabled in `Directory.Packages.props`.
 All explicit package versions belong there; project `PackageReference` items
 have no versions. SDK versions for Aspire and MSTest are managed separately

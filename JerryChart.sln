@@ -45,6 +45,11 @@ Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "prompts", "prompts", "{AC57
 		.github\prompts\docs.prompt.md = .github\prompts\docs.prompt.md
 	EndProjectSection
 EndProject
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "workflows", "workflows", "{0D2D4BBF-7FC1-405A-9D65-74A5D144B59A}"
+	ProjectSection(SolutionItems) = preProject
+		.github\workflows\ci-build.yml = .github\workflows\ci-build.yml
+	EndProjectSection
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -132,6 +137,7 @@ Global
 		HideSolutionNode = FALSE
 	EndGlobalSection
 	GlobalSection(NestedProjects) = preSolution
+		{0D2D4BBF-7FC1-405A-9D65-74A5D144B59A} = {5C91112B-93DB-4311-B9C3-B56992B04E05}
 		{418377F7-95F1-4FD1-AE29-9D030BA1CED1} = {5C91112B-93DB-4311-B9C3-B56992B04E05}
 		{AC57D8BE-F981-4AFC-93CA-286E16AB8C70} = {5C91112B-93DB-4311-B9C3-B56992B04E05}
 	EndGlobalSection

@@ -3,7 +3,7 @@ const fs = require("node:fs");
 const path = require("node:path");
 const { createRequire } = require("node:module");
 const test = require("node:test");
-const ts = require("typescript");
+const { transformSync } = require("esbuild");
 const React = require("react");
 const { renderToStaticMarkup } = require("react-dom/server");
 
@@ -25,10 +25,13 @@ function modules(overrides = {}) {
       const relativePath = name.slice(2);
       return load(relativePath + (fs.existsSync(path.join(root, "src", relativePath + ".ts")) ? ".ts" : ".tsx"));
     };
-    const compiled = ts.transpileModule(fs.readFileSync(file, "utf8"), {
-      compilerOptions: { module: ts.ModuleKind.CommonJS, jsx: ts.JsxEmit.ReactJSX, target: ts.ScriptTarget.ES2022 },
-      fileName: file,
-    }).outputText;
+    const compiled = transformSync(fs.readFileSync(file, "utf8"), {
+      loader: file.endsWith(".tsx") ? "tsx" : "ts",
+      format: "cjs",
+      jsx: "automatic",
+      target: "es2022",
+      sourcefile: file,
+    }).code;
     new Function("require", "module", "exports", compiled)(requireModule, module, module.exports);
     return module.exports;
   }

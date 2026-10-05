@@ -7,31 +7,30 @@ import { getBlueskyPosts } from "@/lib/bluesky-posts";
 import { blueskyPostUrl, type TopReplyPost } from "@/lib/reply-posts";
 
 type PostState =
-  | { list: string; status: "loading" | "error" }
-  | { list: string; status: "ready"; texts: Record<string, string> };
+  | { list: string; attempt: number; status: "loading" | "error" }
+  | { list: string; attempt: number; status: "ready"; texts: Record<string, string> };
 
 export function TopReplyPosts({ posts }: { posts: TopReplyPost[] }) {
   const list = JSON.stringify(posts.map((post) => post.atUri));
-  const [state, setState] = useState<PostState>({ list, status: "loading" });
+  const [state, setState] = useState<PostState>({ list, attempt: 0, status: "loading" });
   const [attempt, setAttempt] = useState(0);
 
   useEffect(() => {
     const controller = new AbortController();
-    setState({ list, status: "loading" });
     void getBlueskyPosts(JSON.parse(list) as string[], controller.signal).then(
       (texts) => {
-        if (!controller.signal.aborted) setState({ list, status: "ready", texts });
+        if (!controller.signal.aborted) setState({ list, attempt, status: "ready", texts });
       },
       (failure: unknown) => {
         if (controller.signal.aborted) return;
         console.error("Unable to load Jerry's Bluesky posts.", failure);
-        setState({ list, status: "error" });
+        setState({ list, attempt, status: "error" });
       },
     );
     return () => controller.abort();
   }, [list, attempt]);
 
-  const current = state.list === list ? state : { status: "loading" as const };
+  const current = state.list === list && state.attempt === attempt ? state : { status: "loading" as const };
   return (
     <Card>
       <CardHeader>

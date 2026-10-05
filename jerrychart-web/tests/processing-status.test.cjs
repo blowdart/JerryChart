@@ -3,7 +3,7 @@ const fs = require("node:fs");
 const path = require("node:path");
 const { createRequire } = require("node:module");
 const test = require("node:test");
-const ts = require("typescript");
+const { transformSync } = require("esbuild");
 const React = require("react");
 const { renderToStaticMarkup } = require("react-dom/server");
 
@@ -23,10 +23,13 @@ function modules(overrides = {}) {
       const relativePath = name.slice(2);
       return load(relativePath + (fs.existsSync(path.join(root, "src", relativePath + ".ts")) ? ".ts" : ".tsx"));
     };
-    const compiled = ts.transpileModule(fs.readFileSync(file, "utf8"), {
-      compilerOptions: { module: ts.ModuleKind.CommonJS, jsx: ts.JsxEmit.ReactJSX, target: ts.ScriptTarget.ES2022 },
-      fileName: file,
-    }).outputText;
+    const compiled = transformSync(fs.readFileSync(file, "utf8"), {
+      loader: file.endsWith(".tsx") ? "tsx" : "ts",
+      format: "cjs",
+      jsx: "automatic",
+      target: "es2022",
+      sourcefile: file,
+    }).code;
     new Function("require", "module", "exports", compiled)(requireModule, module, module.exports);
     return module.exports;
   }
@@ -237,6 +240,19 @@ function harness(context) {
     unmount() { for (const effect of effects) effect.cleanup?.(); assert.equal(listeners.size, 0); },
   };
 }
+
+test("localized timestamps preserve the server fallback and use browser formatting after hydration", () => {
+  const server = modules()("components\\localized-time.tsx");
+  const html = renderToStaticMarkup(React.createElement(server.LocalizedTime, { timestamp: observedAt }));
+  assert.match(html, /2026-10-05T12:00:00\+00:00 \(UTC\)/);
+  const client = modules({ react: {
+    ...React, useSyncExternalStore: (_subscribe, getSnapshot) => getSnapshot(),
+  } })("components\\localized-time.tsx");
+  const clientHtml = renderToStaticMarkup(React.createElement(client.LocalizedTime, { timestamp: observedAt }));
+  assert.doesNotMatch(clientHtml, /\(UTC\)/);
+  assert.match(clientHtml, /<time dateTime="2026-10-05T12:00:00\+00:00">/);
+  assert.equal(renderToStaticMarkup(React.createElement(client.LocalizedTime, { timestamp: null })), "not recorded");
+});
 
 test("client hides the parent-URI section when there are no outstanding rows", (context) => {
   const component = harness(context);

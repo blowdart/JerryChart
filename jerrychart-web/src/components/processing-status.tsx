@@ -2,28 +2,11 @@
 
 import { useEffect, useRef, useState } from "react";
 import { activityMessage, isProcessingStatus, type ProcessingStatus as Status } from "@/lib/processing-status";
+import { LocalizedTime } from "@/components/localized-time";
 
 interface InitialStatus {
   status: Status | null;
   error: string | null;
-}
-
-function HeartbeatTime({ timestamp }: { timestamp: string | null }) {
-  const [formatter, setFormatter] = useState<Intl.DateTimeFormat | null>(null);
-
-  useEffect(() => {
-    setFormatter(new Intl.DateTimeFormat(navigator.languages.length ? [...navigator.languages] : undefined, {
-      dateStyle: "medium",
-      timeStyle: "short",
-    }));
-  }, []);
-
-  if (timestamp === null) return <>not recorded</>;
-  return (
-    <time dateTime={timestamp}>
-      {formatter ? formatter.format(new Date(timestamp)) : `${timestamp} (UTC)`}
-    </time>
-  );
 }
 
 export function ProcessingStatus({ initial }: { initial: InitialStatus }) {
@@ -38,6 +21,8 @@ export function ProcessingStatus({ initial }: { initial: InitialStatus }) {
     let request: AbortController | undefined;
     let refreshRequested = false;
     if (initial.status || receivedAt.current === null) receivedAt.current = performance.now();
+    // Keep cached data on failed router refreshes; synchronize successful server snapshots with the polling lifecycle.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     if (initial.status) setSnapshot(initial.status);
     setError(initial.error);
     setElapsed(performance.now() - receivedAt.current);
@@ -117,8 +102,8 @@ export function ProcessingStatus({ initial }: { initial: InitialStatus }) {
   return (
     <>
       <p>
-        <span aria-label="Heartbeat">♥</span>{" "}: Jetstream <HeartbeatTime timestamp={snapshot?.monitor.activity.heartbeatAt ?? null} />
-        {showParentUris && queue && <>; parent URIs <HeartbeatTime timestamp={queue.activity.heartbeatAt} /></>}
+        <span aria-label="Heartbeat">♥</span>{" "}: Jetstream <LocalizedTime timestamp={snapshot?.monitor.activity.heartbeatAt ?? null} />
+        {showParentUris && queue && <>; parent URIs <LocalizedTime timestamp={queue.activity.heartbeatAt} /></>}
       </p>
     <section aria-label="Processing status" className="space-y-2 rounded-lg border p-4 text-sm text-muted-foreground">
       <h2 className="font-medium text-foreground">Processing status</h2>

@@ -25,7 +25,7 @@ far, not necessarily complete historical coverage.
 | Requirement | Minimum / supported setup | Installation |
 | --- | --- | --- |
 | .NET SDK | **10.0.100**, or a later stable .NET 10 feature band selected by `global.json`; the runtime alone is insufficient | [.NET 10 SDK](https://dotnet.microsoft.com/download/dotnet/10.0) |
-| Node.js and npm | **22.13.0+** for the supported Aspire JavaScript setup; Node 24 LTS is recommended | [Node.js](https://nodejs.org/en/download) (npm is included) |
+| Node.js and npm | **Node 26.x**, matching CI and the frontend's Node type definitions | [Node.js](https://nodejs.org/en/download) (npm is included) |
 | Container engine | Docker running **Linux containers**, able to pull and run `mysql:8.4` | [Docker Desktop](https://docs.docker.com/desktop/) on Windows/macOS, or [Docker Engine](https://docs.docker.com/engine/install/) on Linux |
 | Git | Required to clone the repository | [Git](https://git-scm.com/downloads) |
 | Aspire CLI | **13.6+**, only required for the `aspire run` option | [Aspire CLI installation](https://aspire.dev/get-started/install-cli/) |
@@ -734,7 +734,7 @@ The **CI Build** GitHub Actions workflow runs on every push to any branch and
 on pull requests. Separate Ubuntu jobs build .NET 10 and run all
 Microsoft.Testing.Platform tests (including isolated Docker/MySQL and Next.js
 integration), and install, lint, type-check, test, and production-build the
-frontend with Node.js 22. The monitor is excluded from integration startup, so
+frontend with Node.js 26. The monitor is excluded from integration startup, so
 CI needs no archive API key and does not contact the metered archive.
 TRX/diagnostic artifacts and frontend JUnit results are retained for 14 days,
 including failed runs. Workflow permissions are read-only, and action versions
@@ -760,7 +760,8 @@ updates. The public MyGet registry is configured explicitly for the idunno
 prereleases. Groups retain the upstream test/JWT and CodeQL patterns and add
 Aspire, MSTest/Testing.Platform, idunno, OpenTelemetry, Next.js, React, and
 Tailwind groups. Dependencies outside those patterns remain eligible for
-individual updates; no dependencies or major versions are ignored.
+individual updates. Both frontend and lint-package lockfiles are monitored;
+ESLint and TypeScript major updates are held for coordinated tooling migrations.
 
 `global.json` selects the .NET 10 **Microsoft.Testing.Platform** `dotnet test`
 runner, and `JerryChart.Tests` uses `MSTest.Sdk` with its native MTP runner.
@@ -793,7 +794,7 @@ Set-Location jerrychart-web
 npm ci
 node --test tests\top-reply-posts.test.cjs
 npm run lint
-npx tsc --noEmit --incremental false
+npm run typecheck
 npm run build
 ```
 
@@ -806,11 +807,26 @@ To run Next.js independently, set `API_BASE_URL` to the running API's HTTP
 endpoint before `npm run dev`. Keep this server-only variable unprefixed by
 `NEXT_PUBLIC_`.
 
-The npm audit-suggested downgrades pin `eslint-config-next` to 14.2.35 and
-`shadcn` to 1.0.0. ESLint is pinned to 8.57.1 for compatibility with the older
-configuration. Next.js itself remains on 16.3.8. The shadcn 1.0.0 package is a
-placeholder, not a component-generation CLI. The ESLint plugin's pinned `glob`
-dependency is overridden to patched version 10.5.0 to avoid the advisory
-introduced by the downgrade. The already generated shadcn/ui
-components remain in the source tree. Adding components with the modern CLI
-requires revisiting this tooling downgrade.
+The frontend uses React/React DOM 19.3, TypeScript 7, ESLint 9 with the
+Next.js 16.3.8 flat configuration, and the shadcn 4 CLI. Node 26 is required
+and its type definitions match the runtime. `npm run typecheck` generates
+Next.js route types before invoking TypeScript, so it works on a clean checkout.
+Next.js builds use the TypeScript CLI; Node tests use esbuild to transpile
+the real source modules because TypeScript 7 no longer exposes the old
+JavaScript compiler API. Generated shadcn/ui components remain in the source
+tree; package upgrades do not regenerate them.
+ESLint remains on 9.x because the Next.js React/import/accessibility plugins
+do not yet support ESLint 10. The private `tooling/lint` npm package supplies
+TypeScript 6 to `eslint-config-next` and its lint dependencies, which still require the
+JavaScript compiler API. The application and Next.js build use TypeScript 7.
+The frontend's postinstall installs the locked lint dependencies separately,
+avoiding incompatible compiler peers in the application dependency tree.
+
+**Accepted developer-tool advisory:** modern shadcn and Next.js lint tooling
+depend transitively on `braces` through glob-processing packages.
+[GHSA-vfj7-8cjw-p6xm](https://github.com/advisories/GHSA-vfj7-8cjw-p6xm)
+reports stack-exhaustion denial of service from deeply nested patterns, with no
+patched `braces` release currently available. These dependencies are development
+tools, not application runtime dependencies. Keep tool inputs trusted and review
+the advisory when updating packages; the accepted risk is not an audit-clean
+result. Do not use `npm audit fix --force` to silently downgrade this toolchain.

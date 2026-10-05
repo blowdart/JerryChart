@@ -14,20 +14,20 @@ export function ProfileHoverCard({ author, clickable = false }: {
   const trigger = useRef<HTMLAnchorElement>(null);
   const [container, setContainer] = useState<HTMLElement | null>(null);
   const [open, setOpen] = useState(false);
-  const [profile, setProfile] = useState<BlueskyProfile | null>(null);
-  const [error, setError] = useState(false);
+  const [savedProfile, setProfile] = useState<BlueskyProfile | null>(null);
+  const [failedDid, setFailedDid] = useState<string | null>(null);
+  const profile = savedProfile?.did === author.did ? savedProfile : null;
+  const error = failedDid === author.did;
   const [attempt, setAttempt] = useState(0);
 
   useEffect(() => {
     if (!open) return;
     let active = true;
-    setProfile(null);
-    setError(false);
     void getBlueskyProfile(author.did).then(
       (result) => { if (active) setProfile(result); },
       (failure: unknown) => {
         console.error(`Unable to load Bluesky profile ${author.did}.`, failure);
-        if (active) setError(true);
+        if (active) setFailedDid(author.did);
       },
     );
     return () => { active = false; };
@@ -38,7 +38,11 @@ export function ProfileHoverCard({ author, clickable = false }: {
     <PreviewCard.Root
       open={open}
       onOpenChange={(next) => {
-        if (next) setContainer(trigger.current?.closest("dialog") ?? document.body);
+        if (next) {
+          setContainer(trigger.current?.closest("dialog") ?? document.body);
+          setProfile(null);
+          setFailedDid(null);
+        }
         setOpen(next);
       }}
     >
@@ -55,7 +59,11 @@ export function ProfileHoverCard({ author, clickable = false }: {
             {error ? (
               <div role="alert" className="space-y-2">
                 <p>Unable to load this Bluesky profile.</p>
-                <button type="button" className="rounded border px-3 py-1" onClick={() => setAttempt((value) => value + 1)}>
+                <button type="button" className="rounded border px-3 py-1" onClick={() => {
+                  setProfile(null);
+                  setFailedDid(null);
+                  setAttempt((value) => value + 1);
+                }}>
                   Try again
                 </button>
               </div>

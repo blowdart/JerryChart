@@ -1,0 +1,12 @@
+{
+  "name": "@jerrychart/lint",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": "./eslint.config.mjs",
+  "devDependencies": {
+    "eslint": "9.39.5",
+    "eslint-config-next": "16.3.8",
+    "typescript": "^6.0.3"
+  }
+}

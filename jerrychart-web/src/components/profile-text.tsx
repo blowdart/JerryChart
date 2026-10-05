@@ -8,7 +8,6 @@ function ProfileMention({ handle }: { handle: string }) {
   const [failed, setFailed] = useState(false);
   useEffect(() => {
     let active = true;
-    setFailed(false);
     void resolveBlueskyHandle(handle).then(
       (did) => { if (active) setResolution({ handle, did }); },
       (error: unknown) => {
@@ -44,7 +43,7 @@ export function ProfileText({ text }: { text: string }) {
       if ((start > 0 && /[\p{L}\p{N}_.+@-]/u.test(text[start - 1])) ||
           !isBlueskyHandle(handle)) continue;
       parts.push(text.slice(offset, start));
-      parts.push(<ProfileMention key={start} handle={handle} />);
+      parts.push(<ProfileMention key={`${start}:${handle}`} handle={handle} />);
       offset = start + handle.length + 1;
       continue;
     }

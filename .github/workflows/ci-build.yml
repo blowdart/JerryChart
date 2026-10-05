@@ -29,9 +29,11 @@ jobs:
       - name: Set up Node.js for Aspire frontend integration
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: "22"
+          node-version: "26"
           cache: npm
-          cache-dependency-path: jerrychart-web/package-lock.json
+          cache-dependency-path: |
+            jerrychart-web/package-lock.json
+            jerrychart-web/tooling/lint/package-lock.json
 
       - name: Verify Docker
         run: docker info
@@ -70,9 +72,11 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: "22"
+          node-version: "26"
           cache: npm
-          cache-dependency-path: jerrychart-web/package-lock.json
+          cache-dependency-path: |
+            jerrychart-web/package-lock.json
+            jerrychart-web/tooling/lint/package-lock.json
 
       - name: Install dependencies
         run: npm ci
@@ -81,7 +85,7 @@ jobs:
         run: npm run lint
 
       - name: Type-check
-        run: npx tsc --noEmit --incremental false
+        run: npm run typecheck
 
       - name: Test
         run: node --test --test-reporter=junit --test-reporter-destination=frontend-tests.xml tests/*.test.cjs

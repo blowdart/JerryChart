@@ -88,7 +88,11 @@ jobs:
         run: npm run typecheck
 
       - name: Test
-        run: node --test --test-reporter=junit --test-reporter-destination=frontend-tests.xml tests/*.test.cjs
+        run: >-
+          node --test
+          --test-reporter=spec --test-reporter-destination=stdout
+          --test-reporter=junit --test-reporter-destination=frontend-tests.xml
+          tests/*.test.cjs
 
       - name: Build
         run: npm run build

@@ -64,7 +64,6 @@ static async Task<int> ExecuteAsync(CancellationToken cancellationToken)
             await MonitorSchema.InitializeAsync(connection, stoppingToken);
         }
 
-        host.Services.UseParentUriBackfillScheduler();
         await host.StartAsync(stoppingToken);
         return await host.Services.GetRequiredService<MonitorSupervisor>().Completion;
     }

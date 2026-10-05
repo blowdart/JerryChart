@@ -1,6 +1,7 @@
 // Copyright (c) Barry Dorrans. All rights reserved.
 // Licensed under the MIT License.
 
+using JerryChart.Api;
 using JerryChart.Data;
 
 using MySqlConnector;
@@ -9,6 +10,8 @@ var builder = WebApplication.CreateBuilder(args);
 builder.AddServiceDefaults();
 builder.AddJerryChartDatabase();
 builder.Services.AddProblemDetails();
+builder.Services.ConfigureHttpJsonOptions(options =>
+    options.SerializerOptions.TypeInfoResolverChain.Insert(0, ApiJsonContext.Default));
 
 var app = builder.Build();
 app.UseExceptionHandler();
@@ -19,6 +22,7 @@ await using (var connection = await app.Services.GetRequiredService<MySqlDataSou
 {
     await MonitorSchema.InitializeAsync(connection, app.Lifetime.ApplicationStopping);
 }
+ApiLog.DatabaseInitialized(app.Logger);
 
 app.MapGet("/statistics/reply-summary", async (StatisticsStore store, CancellationToken cancellationToken) =>
     TypedResults.Ok(await store.GetReplySummaryAsync(cancellationToken)));

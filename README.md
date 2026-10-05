@@ -483,32 +483,26 @@ left by interrupted invocations, not a requirement to resolve every new hit.
 It does not repeatedly retry terminal unavailable posts.
 
 The normal monitor process also schedules this same backfill **once daily at
-03:00 UTC**, using **Coravel 6.0.2** (centrally versioned, normal runtime
-dependency). The schedule is explicitly `DailyAt(3, 0).Zoned(TimeZoneInfo.Utc)`;
-Coravel 6.0.2 has no `UseUtc` method. This is a fixed schedule in
-`ParentUriBackfillScheduling`, not a local-time or daylight-saving-time setting.
-In `Program.cs`, the normal monitor registers
-`AddParentUriBackfillScheduler()` and configures
-`UseParentUriBackfillScheduler()` after shared schema initialization and before
-host startup. These helpers register Coravel with `AddScheduler()`, register
-the transient `ScheduledParentUriBackfill` invocable, and configure
-`Schedule<ScheduledParentUriBackfill>().DailyAt(3, 0).Zoned(TimeZoneInfo.Utc)
-.PreventOverlapping("parent-uri-backfill")`.
+03:00 UTC**, using the small `ScheduledParentUriBackfill` background service.
+`AddParentUriBackfillScheduler()` registers it with the normal monitor host;
+schema initialization finishes before host startup. The service uses
+`TimeProvider` and cancellation-aware waits, checking the UTC clock at least
+once per minute to accommodate wall-clock adjustments.
 There is **no immediate startup backfill**. The shared schema is initialized
 before starting the scheduler; scheduled invocations also initialize it under
 their own resource lock.
 
 Scheduled work runs only while the normal monitor host is running. Missed daily
-runs are not durably recorded or replayed after a process restart. Coravel's
-in-memory `PreventOverlapping` guard and the existing independent MySQL advisory
+runs are not durably recorded or replayed after a process restart. The service
+awaits each invocation and has an in-process overlap guard; the independent MySQL advisory
 lock prevent concurrent backfill workers, including across processes. If a
 manual invocation owns the lock at the scheduled time, the scheduled invocation
 logs an informational **skip**, leaves its status untouched, and waits for the
 next daily slot; it does not fault or retry the lock. A competing manual command
 still refuses visibly. Running a manual command does not register a scheduler.
 
-`ScheduledParentUriBackfill` implements Coravel's `IInvocable` and
-`ICancellableInvocable`, linking Coravel's cancellation token with the host's
+`ScheduledParentUriBackfill` derives from `BackgroundService`,
+linking the service cancellation token with the host's
 `ApplicationStopping` token. It calls `ParentUriBackfillInvocation.RunAsync`,
 the same underlying entrypoint used by the `backfill-parent-uris` command,
 which creates `ParentPostClient` and runs `ParentUriBackfiller`. The
@@ -519,9 +513,10 @@ Each scheduled or manual invocation uses this shared backfiller entrypoint, with
 a fresh disposable HTTP client/rate limiter and its own dedicated non-pooled
 MySQL lock connection. Both publish the same durable status and independent
 heartbeat. Host shutdown cancels scheduled HTTP, retry and cooldown waits;
-Coravel awaits completion, including heartbeat cleanup, before the host stops.
+The background service awaits completion, including heartbeat cleanup, before the host stops.
 Known invocation failures are logged without stopping future daily scheduling;
-unexpected exceptions are surfaced by Coravel's configured error handler.
+unexpected exceptions are surfaced through the standard hosted-service failure
+logging and stop the host rather than silently losing the schedule.
 An empty queue completes without a public network request. New hits already
 contain full parent URIs, and terminal unavailable hits are never repeatedly
 retried by the daily schedule.
@@ -552,6 +547,33 @@ database retry waits as well as HTTP/cooldown waits.
 The internal named status enum preserves the database values: `Pending = 0`
 (unattempted), `Resolved = 1`, `Unavailable = 2`, and `RetryPending = 3`;
 only Pending and due RetryPending rows are selected by later invocations.
+
+## Native AOT readiness
+
+The API, monitor, and their shared Data/ServiceDefaults libraries enable
+`IsAotCompatible`, which turns on trimming and AOT analyzers. Both applications
+disable reflection-based JSON serialization. The API registers `ApiJsonContext`
+for every statistics response and problem-details response; monitor progress
+uses `ReplayJsonContext`. Application logging uses compile-time
+`LoggerMessage` generation, with CA1848 enabled for the API and monitor.
+
+Analyzer-enabled Release builds and Windows x64 Native AOT publishes of both
+applications pass without warnings, with warnings treated as errors:
+
+```powershell
+dotnet publish JerryChart.Api -c Release -r win-x64 -p:PublishAot=true -p:TrimmerSingleWarn=false -warnaserror
+dotnet publish JerryChart.Monitor -c Release -r win-x64 -p:PublishAot=true -p:TrimmerSingleWarn=false -warnaserror
+```
+
+Use the target platform's native compiler toolchain (MSVC and the Windows SDK
+on Windows). Native publishing is opt-in, not the default Aspire development
+build.
+
+The monitor uses a small background service instead of Coravel to avoid its
+reflection-based scheduler binding and invocable construction. AOT and trimming
+warnings are not suppressed. `IsAotCompatible` enables readiness analysis,
+not a guarantee that every transitive dependency supports AOT; validate native
+publishes when changing dependencies.
 
 ## API
 

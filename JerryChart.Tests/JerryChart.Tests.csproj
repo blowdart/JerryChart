@@ -1,6 +1,7 @@
 <Project Sdk="MSTest.Sdk">
 
   <ItemGroup>
+    <ProjectReference Include="..\JerryChart.Api\JerryChart.Api.csproj" />
     <ProjectReference Include="..\JerryChart.AppHost\JerryChart.AppHost.csproj" />
     <ProjectReference Include="..\JerryChart.Data\JerryChart.Data.csproj" />
     <ProjectReference Include="..\JerryChart.Monitor\JerryChart.Monitor.csproj" />

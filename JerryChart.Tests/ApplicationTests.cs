@@ -13,9 +13,6 @@ using Aspire.Hosting;
 using Aspire.Hosting.ApplicationModel;
 using Aspire.Hosting.Testing;
 
-using Coravel.Scheduling.Schedule;
-using Coravel.Scheduling.Schedule.Interfaces;
-
 using idunno.AtProto;
 using idunno.AtProto.Jetstream;
 using idunno.AtProto.Jetstream.Archive;
@@ -471,9 +468,8 @@ public sealed class ApplicationTests
         });
         builder.Services.AddParentUriBackfillScheduler();
         using var host = builder.Build();
-        host.Services.UseParentUriBackfillScheduler();
-        var scheduler = (Scheduler)host.Services.GetRequiredService<IScheduler>();
-        await scheduler.RunAtAsync(new DateTime(2026, 10, 5, 3, 0, 0, DateTimeKind.Utc));
+        var scheduler = host.Services.GetRequiredService<ScheduledParentUriBackfill>();
+        await scheduler.InvokeAsync(cancellationToken);
         Assert.AreEqual("completed", (await statusStore.GetAsync(cancellationToken)).ParentUriBackfill.Activity.State);
         Assert.AreEqual(0, clients[0].Calls, "An empty scheduled queue must not access the public AppView.");
         Assert.IsTrue(clients[0].Disposed);
@@ -486,7 +482,7 @@ public sealed class ApplicationTests
                 "parent-uri-backfill", "backfill-running", ":parent-uri-backfill", manualOwner,
                 TimeProvider.System, cancellationToken);
             WorkerActivity before = (await statusStore.GetAsync(cancellationToken)).ParentUriBackfill.Activity;
-            await scheduler.RunAtAsync(new DateTime(2026, 10, 6, 3, 0, 0, DateTimeKind.Utc));
+            await scheduler.InvokeAsync(cancellationToken);
             Assert.AreEqual(1, log.Skipped);
             Assert.AreEqual(before, (await statusStore.GetAsync(cancellationToken)).ParentUriBackfill.Activity,
                 "A skipped schedule must not overwrite the manual owner's status.");
@@ -504,14 +500,14 @@ public sealed class ApplicationTests
                         UTC_TIMESTAMP(6), 'did:plc:reply', 'did:plc:parent')
                     """;
         await command.ExecuteNonQueryAsync(cancellationToken);
-        Task running = scheduler.RunAtAsync(new DateTime(2026, 10, 7, 3, 0, 0, DateTimeKind.Utc));
+        Task running = scheduler.InvokeAsync(cancellationToken);
         try
         {
             await entered.Task.WaitAsync(TimeSpan.FromSeconds(5), cancellationToken);
             Assert.AreEqual("backfill-running", (await statusStore.GetAsync(cancellationToken)).ParentUriBackfill.Activity.State);
             int allocated = clients.Count;
-            await scheduler.RunAtAsync(new DateTime(2026, 10, 8, 3, 0, 0, DateTimeKind.Utc));
-            Assert.AreEqual(allocated, clients.Count, "Coravel PreventOverlapping must suppress another due invocation.");
+            await scheduler.InvokeAsync(cancellationToken);
+            Assert.AreEqual(allocated, clients.Count, "The background service must suppress overlapping invocations.");
             await Assert.ThrowsAsync<InvalidOperationException>(() =>
                 host.Services.GetRequiredService<ParentUriBackfillInvocation>().RunAsync(false, cancellationToken));
         }
@@ -535,14 +531,14 @@ public sealed class ApplicationTests
         fail = true;
         var invocation = host.Services.GetRequiredService<ParentUriBackfillInvocation>();
         var next = new ScheduledParentUriBackfill(invocation,
-            freshHost.Services.GetRequiredService<IHostApplicationLifetime>(), log);
-        await next.Invoke();
+            freshHost.Services.GetRequiredService<IHostApplicationLifetime>(), log, TimeProvider.System);
+        await next.InvokeAsync(cancellationToken);
         Assert.AreEqual("failure", (await statusStore.GetAsync(cancellationToken)).ParentUriBackfill.Activity.State);
         Assert.AreEqual(1, log.Failed);
         Assert.IsTrue(clients.All(client => client.Disposed));
         command.CommandText = "UPDATE Hits SET ParentUriBackfillStatus = 2";
         await command.ExecuteNonQueryAsync(cancellationToken);
-        await next.Invoke();
+        await next.InvokeAsync(cancellationToken);
         ParentUriProcessingStatus completed = (await statusStore.GetAsync(cancellationToken)).ParentUriBackfill;
         Assert.AreEqual("completed", completed.Activity.State);
         Assert.AreEqual(1L, completed.Unavailable);

@@ -13,7 +13,8 @@ const root = path.resolve(__dirname, "..");
 function modules(overrides = {}) {
   const cache = new Map();
   function load(relative) {
-    const file = path.join(root, "src", relative);
+    // Tests run on Windows locally and Linux in CI; normalize either separator.
+    const file = path.join(root, "src", ...relative.split(/[\\/]/));
     if (cache.has(file)) return cache.get(file).exports;
     const module = { exports: {} };
     cache.set(file, module);

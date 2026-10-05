@@ -32,7 +32,7 @@ public sealed class MonitorHostBuilderTests
             Assert.IsFalse(host.Services.GetServices<IHostedService>().Any(
                 service => service is ActorHandleUpdater),
                 "Backfill configuration must not register the actor updater.");
-            Assert.IsNull(host.Services.GetService<Coravel.Scheduling.Schedule.Interfaces.IScheduler>(),
+            Assert.IsNull(host.Services.GetService<ScheduledParentUriBackfill>(),
                 "The manual backfill command must not register or start the daily scheduler.");
         }
         finally

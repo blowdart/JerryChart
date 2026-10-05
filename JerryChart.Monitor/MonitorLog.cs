@@ -106,6 +106,4 @@ internal static partial class MonitorLog
     [LoggerMessage(32, LogLevel.Information, "Parent-URI backfill scheduled daily at 03:00 UTC. No immediate startup invocation.")]
     internal static partial void ParentUriBackfillScheduleRegistered(ILogger logger);
 
-    [LoggerMessage(33, LogLevel.Error, "An unexpected scheduled parent-URI backfill failure reached Coravel's error handler.")]
-    internal static partial void ScheduledParentUriBackfillUnexpectedFailure(ILogger logger, Exception exception);
 }

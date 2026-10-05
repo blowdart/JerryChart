@@ -1,0 +1,21 @@
+<Project Sdk="MSTest.Sdk">
+
+  <ItemGroup>
+    <ProjectReference Include="..\JerryChart.AppHost\JerryChart.AppHost.csproj" />
+    <ProjectReference Include="..\JerryChart.Data\JerryChart.Data.csproj" />
+    <ProjectReference Include="..\JerryChart.Monitor\JerryChart.Monitor.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Aspire.Hosting.Testing" />
+  </ItemGroup>
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <IsPackable>false</IsPackable>
+    <TestingExtensionsProfile>Default</TestingExtensionsProfile>
+  </PropertyGroup>
+
+</Project>

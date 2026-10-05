@@ -1,0 +1,13 @@
+@api = http://localhost:5245
+
+GET {{api}}/notes
+Accept: application/json
+
+###
+
+POST {{api}}/notes
+Content-Type: application/json
+
+{
+  "text": "Hello from the API"
+}

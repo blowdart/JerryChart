@@ -1,0 +1,17 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="JerryChart.Monitor" />
+    <InternalsVisibleTo Include="JerryChart.Tests" />
+    <PackageReference Include="Aspire.MySqlConnector" />
+    <PackageReference Include="idunno.AtProto" />
+    <EmbeddedResource Include="..\JerryChart.Monitor\Schema.sql" Link="Schema.sql" LogicalName="JerryChart.Data.Schema.sql" />
+  </ItemGroup>
+
+</Project>

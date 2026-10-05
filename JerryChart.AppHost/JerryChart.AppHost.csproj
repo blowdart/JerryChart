@@ -1,0 +1,22 @@
+<Project Sdk="Aspire.AppHost.Sdk">
+
+  <ItemGroup>
+    <ProjectReference Include="..\JerryChart.Api\JerryChart.Api.csproj" />
+    <ProjectReference Include="..\JerryChart.Monitor\JerryChart.Monitor.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Aspire.Hosting.JavaScript" />
+    <PackageReference Include="Aspire.Hosting.MySql" />
+  </ItemGroup>
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <AspireUseCliBundle>true</AspireUseCliBundle>
+    <UserSecretsId>3a4e704b-64a0-4bb2-ac91-3444a1eecdb7</UserSecretsId>
+  </PropertyGroup>
+
+</Project>

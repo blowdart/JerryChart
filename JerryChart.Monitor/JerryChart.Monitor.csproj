@@ -1,0 +1,25 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <ItemGroup>
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+    <PackageReference Include="Coravel" />
+    <PackageReference Include="System.CommandLine" />
+    <PackageReference Include="idunno.AtProto" />
+    <PackageReference Include="idunno.Bluesky" />
+    <ProjectReference Include="..\JerryChart.Data\JerryChart.Data.csproj" />
+    <ProjectReference Include="..\JerryChart.ServiceDefaults\JerryChart.ServiceDefaults.csproj" />
+  </ItemGroup>
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="JerryChart.Tests" />
+    <None Update="appsettings.json" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+  </ItemGroup>
+
+</Project>

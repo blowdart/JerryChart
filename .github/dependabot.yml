@@ -1,0 +1,88 @@
+version: 2
+
+registries:
+  blowdart-myget:
+    type: nuget-feed
+    url: https://www.myget.org/F/blowdart/api/v3/index.json
+
+updates:
+  - package-ecosystem: nuget
+    directory: "/"
+    registries:
+      - blowdart-myget
+    schedule:
+      interval: daily
+    open-pull-requests-limit: 10
+    cooldown:
+      default-days: 7
+    # Retain the upstream groups and keep this solution's related packages together.
+    groups:
+      TestSdk:
+        patterns:
+          - Microsoft.NET.Test.Sdk
+          - Microsoft.CodeCoverage
+      AspNetCoreTesting:
+        patterns:
+          - Microsoft.AspNetCore.Mvc.Testing
+          - Microsoft.AspNetCore.TestHost
+      Xunit:
+        patterns:
+          - xunit.v3
+          - xunit.runner.visualstudio
+      IdentityJwt:
+        patterns:
+          - System.IdentityModel.Tokens.Jwt
+          - Microsoft.IdentityModel.JsonWebTokens
+      MSTest:
+        patterns:
+          - MSTest*
+          - Microsoft.Testing.*
+      Aspire:
+        patterns:
+          - Aspire.*
+      Idunno:
+        patterns:
+          - idunno.AtProto*
+          - idunno.Bluesky*
+      OpenTelemetry:
+        patterns:
+          - OpenTelemetry.*
+
+  - package-ecosystem: npm
+    directory: "/jerrychart-web"
+    schedule:
+      interval: daily
+    open-pull-requests-limit: 10
+    cooldown:
+      default-days: 7
+    groups:
+      NextJs:
+        patterns:
+          - next
+          - eslint-config-next
+          - "@next/*"
+      React:
+        patterns:
+          - react
+          - react-dom
+          - "@types/react"
+          - "@types/react-dom"
+      Tailwind:
+        patterns:
+          - tailwindcss
+          - "@tailwindcss/*"
+          - tw-animate-css
+
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: daily
+    open-pull-requests-limit: 10
+    cooldown:
+      default-days: 7
+    groups:
+      github/codeql-action:
+        patterns:
+          - github/codeql-action/analyze
+          - github/codeql-action/init
+          - github/codeql-action/upload-sarif

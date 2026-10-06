@@ -37,10 +37,11 @@ function modules(overrides = {}) {
   return load;
 }
 
-const { isProcessingStatus, activityMessage } = modules()("lib\\processing-status.ts");
+const { isProcessingStatus, activityMessage, activityOutcome, activitySummary } = modules()("lib\\processing-status.ts");
 const observedAt = "2026-10-05T12:00:00+00:00";
 const worker = (phase = "not-started") => ({
-  phase, state: phase, isRunning: ["archive", "live", "backfill-running", "retrying"].includes(phase),
+  phase, state: phase, isRunning: ["archive", "live", "backfill-running", "retrying",
+    "handle-refresh-idle", "handle-refresh-running", "handle-refresh-waiting"].includes(phase),
   startedAt: phase === "not-started" ? null : observedAt,
   changedAt: phase === "not-started" ? null : observedAt,
   heartbeatAt: phase === "not-started" ? null : observedAt,
@@ -50,6 +51,7 @@ const status = (phase = "not-started", parentPhase = "not-started") => ({
   observedAt,
   monitor: { activity: worker(phase), checkpointUpdatedAt: null, archiveEstimate: null },
   parentUriBackfill: { activity: worker(parentPhase), pending: 0, retryPending: 0, retryDue: 0, resolved: 0, unavailable: 0 },
+  handleRefresh: { activity: worker(), pending: 0, due: 0, nextDueAt: null },
 });
 const response = (body, code = 200) => new Response(JSON.stringify(body), { status: code });
 const settle = () => new Promise((resolve) => setImmediate(resolve));
@@ -85,6 +87,85 @@ test("activity messages distinguish replay, live, retries, stale, stopped, failu
   assert.match(activityMessage(worker("failure"), observedAt, 90_000), /failed/);
   assert.match(activityMessage(worker("completed"), observedAt, 90_000), /recorded run completed/);
   assert.match(activityMessage(worker(), observedAt, 90_000), /Not started \/ unknown/);
+});
+
+test("activity summaries stay concise while distinguishing stale, stalled and worker phases", () => {
+  assert.equal(activitySummary(worker("archive"), observedAt, 0), "Historical replay in progress.");
+  assert.equal(activitySummary(worker("live"), observedAt, 0), "Listening to live events.");
+  assert.equal(activitySummary(worker("retrying"), observedAt, 0), "Retrying after a temporary failure or waiting for scheduled retries.");
+  assert.equal(activitySummary(worker("archive"), observedAt, 60_000), "Heartbeat stale; activity unknown.");
+  assert.equal(activitySummary(worker("archive"), observedAt, 0, {
+    noProgressSince: observedAt, lastProgressAt: observedAt, stalledSince: observedAt,
+    consecutiveGenerationMismatches: 2, nextRetryAt: null,
+  }), "Archive stalled.");
+});
+
+test("activity outcomes distinguish never-run, completed, active and stale backfills", () => {
+  assert.equal(activityOutcome(worker(), observedAt, 0), "Never run.");
+  assert.equal(activityOutcome(worker("completed"), observedAt, 0), "Completed.");
+  assert.match(activityOutcome({ ...worker("completed"), finishedAt: null }, observedAt, 0), /No finish recorded/);
+  assert.equal(activityOutcome(worker("backfill-running"), observedAt, 0), "In progress.");
+  assert.match(activityOutcome(worker("backfill-running"), observedAt, 60_000), /Activity stale; the run may have been interrupted/);
+  assert.equal(activityOutcome(worker("failure"), observedAt, 0), "Failed.");
+  assert.equal(activityOutcome(worker("stopped"), observedAt, 0), "Stopped before completion.");
+});
+
+test("handle refresh validates recurring eligibility separately from worker activity and accepts older API snapshots", () => {
+  const value = status("archive");
+  value.handleRefresh = { activity: worker("handle-refresh-idle"), pending: 12, due: 0, nextDueAt: observedAt };
+  assert.ok(isProcessingStatus(value));
+  value.handleRefresh.activity = worker();
+  value.handleRefresh.due = 12;
+  assert.ok(isProcessingStatus(value), "Due rows must not imply an active worker.");
+  const legacy = { ...value };
+  delete legacy.handleRefresh;
+  assert.ok(isProcessingStatus(legacy));
+  for (const handles of [
+    null, {}, { ...value.handleRefresh, pending: -1 }, { ...value.handleRefresh, due: 13 },
+    { ...value.handleRefresh, due: 0.5 }, { ...value.handleRefresh, nextDueAt: "invalid" },
+    { ...value.handleRefresh, nextDueAt: null }, { ...value.handleRefresh, pending: 0, due: 0 },
+    { ...value.handleRefresh, activity: { ...worker("handle-refresh-idle"), isRunning: false } },
+  ]) assert.equal(isProcessingStatus({ ...value, handleRefresh: handles }), false);
+  for (const phase of ["handle-refresh-idle", "handle-refresh-running", "handle-refresh-waiting"]) {
+    const active = worker(phase);
+    assert.ok(isProcessingStatus({ ...value, handleRefresh: { ...value.handleRefresh, activity: active } }));
+    assert.doesNotMatch(activityOutcome(active, observedAt, 0), /Completed/);
+    assert.match(activityMessage(active, observedAt, 60_000), /Heartbeat stale; activity unknown/);
+    assert.match(activityOutcome(active, observedAt, 60_000), /Activity stale/);
+    const stale = { ...active, state: "stale", isRunning: false };
+    assert.ok(isProcessingStatus({ ...value, handleRefresh: { ...value.handleRefresh, activity: stale } }));
+  }
+  assert.match(activityMessage(worker("handle-refresh-waiting"), observedAt, 0), /request pacing or a server rate limit/);
+});
+
+test("archive stalls remain distinct from heartbeat liveness, including stale cached and stopped workers", () => {
+  const replay = {
+    noProgressSince: "2026-10-05T11:45:00Z", lastProgressAt: "2026-10-05T11:45:00Z",
+    stalledSince: "2026-10-05T11:50:00Z", consecutiveGenerationMismatches: 7,
+    nextRetryAt: "2026-10-05T12:05:00Z",
+  };
+  const value = status("retrying");
+  value.monitor.archiveReplay = replay;
+  assert.ok(isProcessingStatus(value));
+  const message = activityMessage(worker("retrying"), observedAt, 0, null, replay);
+  assert.match(message, /heartbeat is fresh, but archive processing is not progressing/);
+  assert.match(message, /Archive stalled: 10 minutes stalled; 15 minutes without/);
+  assert.match(message, /7 consecutive generation mismatches/);
+  assert.doesNotMatch(message, /time remaining|Historical replay in progress/);
+  const stale = activityMessage(worker("retrying"), observedAt, 60_000, null, replay);
+  assert.match(stale, /Heartbeat stale; activity unknown/);
+  assert.match(stale, /Last recorded archive stall: 11 minutes stalled/);
+  assert.match(activityMessage(worker("stopped"), observedAt, 0, null, replay), /Worker stopped.*Last recorded archive stall/);
+  assert.match(activityMessage(worker("archive"), observedAt, 0, null,
+    { ...replay, stalledSince: null, consecutiveGenerationMismatches: 0 }), /Historical replay in progress/);
+  for (const invalid of [
+    { ...replay, consecutiveGenerationMismatches: -1 }, { ...replay, consecutiveGenerationMismatches: 1.5 },
+    { ...replay, noProgressSince: null }, { ...replay, lastProgressAt: "invalid" },
+    { ...replay, nextRetryAt: "invalid" }, { ...replay, stalledSince: "invalid" },
+  ]) {
+    value.monitor.archiveReplay = invalid;
+    assert.equal(isProcessingStatus(value), false);
+  }
 });
 
 test("archive estimates are validated and shown only with fresh forward progress in the current attempt", () => {
@@ -174,7 +255,7 @@ test("public proxy returns no-store status or explicit failure and forwards canc
 
 function harness(context) {
   const states = [], effects = [], refs = [];
-  let stateIndex = 0, effectIndex = 0, refIndex = 0, now = 0;
+  let stateIndex = 0, effectIndex = 0, refIndex = 0, idIndex = 0, now = 0;
   let visible = "visible";
   const timers = new Map(), listeners = new Set();
   let timerId = 0;
@@ -204,6 +285,7 @@ function harness(context) {
       if (!(index in refs)) refs[index] = { current: initial };
       return refs[index];
     },
+    useId() { return `processing-status-${idIndex++}`; },
     useEffect(action, deps) {
       const index = effectIndex++, previous = effects[index];
       if (!previous || deps.some((dep, i) => dep !== previous.deps[i])) {
@@ -216,7 +298,7 @@ function harness(context) {
   return {
     render(next = initial) {
       initial = next;
-      stateIndex = effectIndex = refIndex = 0;
+      stateIndex = effectIndex = refIndex = idIndex = 0;
       return renderToStaticMarkup(ProcessingStatus({ initial }));
     },
     commit() {
@@ -262,6 +344,37 @@ test("client hides the parent-URI section when there are no outstanding rows", (
   assert.match(html, /Not started \/ unknown/);
   assert.doesNotMatch(html, /Parent URIs:|parent-URI rows/);
   assert.doesNotMatch(html, /run completed|in progress/);
+  const details = html.match(/<dialog\b[\s\S]*?<\/dialog>/)?.[0];
+  assert.match(details, /Parent-URI backfill/);
+  assert.match(details, /Activity started: not recorded \(never run\)\./);
+  assert.match(details, /Activity finished: not recorded \(never run\)\./);
+  assert.match(details, /Parent-URI backfill<\/h3><p>Never run\.<\/p><p>Activity started:/);
+  assert.doesNotMatch(details.slice(details.indexOf("Parent-URI backfill"), details.indexOf("Handle refresh")), /Outcome:/);
+  component.commit();
+  component.unmount();
+});
+
+test("handle refresh details follow parent backfill, precede refresh note, and never expand the compact summary", (context) => {
+  const component = harness(context);
+  const initial = { status: status("live", "completed"), error: null };
+  initial.status.handleRefresh = {
+    activity: worker("handle-refresh-waiting"), pending: 1234, due: 12, nextDueAt: observedAt,
+  };
+  const html = component.render(initial);
+  const details = html.match(/<dialog\b[\s\S]*?<\/dialog>/)?.[0];
+  const summary = html.slice(0, html.indexOf("<dialog"));
+  assert.doesNotMatch(summary, /Handle refresh|refreshes scheduled|rate limit/);
+  assert.doesNotMatch(summary, /Heartbeat|heartbeat|♥|parent URIs/);
+  assert.match(details, /Parent-URI backfill[\s\S]*Handle refresh[\s\S]*Status refreshes every 30 seconds/);
+  assert.doesNotMatch(details.slice(details.indexOf("Handle refresh")), /Activity finished:|Scheduled rows include/);
+  assert.match(details, /Handle refresh<\/h3><p>Active \(request pacing \/ rate-limit wait\)\.<\/p>/);
+  assert.doesNotMatch(details.slice(details.indexOf("Handle refresh")), /Outcome:/);
+  assert.match(details, /Handle refresh heartbeat:/);
+  assert.match(details, /Jetstream heartbeat:/);
+  assert.match(details, /Parent-URI heartbeat:/);
+  assert.match(details, /Last phase change:/);
+  assert.match(details, /1,234 refreshes scheduled \(12 due\)/);
+  assert.doesNotMatch(details, /queue counts do not prove worker activity/);
   component.commit();
   component.unmount();
 });
@@ -308,6 +421,9 @@ test("failed polls show explicit errors, retain counts, and age cached running s
   const initial = { status: status("archive", "backfill-running"), error: null };
   initial.status.parentUriBackfill.pending = 12;
   initial.status.parentUriBackfill.unavailable = 3;
+  initial.status.handleRefresh = {
+    activity: worker("handle-refresh-running"), pending: 42, due: 7, nextDueAt: observedAt,
+  };
   component.render(initial);
   component.commit();
   component.tick();
@@ -319,6 +435,8 @@ test("failed polls show explicit errors, retain counts, and age cached running s
   assert.match(html, /Heartbeat stale; activity unknown/);
   assert.match(html, /12 parent-URI rows remaining/);
   assert.match(html, /3 unavailable \(not retried\)/);
+  assert.match(html, /42 refreshes scheduled \(7 due\)/);
+  assert.match(html, /Activity stale; the run may have been interrupted \(last phase: handle-refresh-running\)/);
   assert.doesNotMatch(html, /in progress/);
   assert.equal(console.error.mock.callCount(), 2);
   component.unmount();
@@ -345,13 +463,64 @@ test("router prop refresh replaces status and aborts polls without resetting err
   component.unmount();
 });
 
-test("client places the approximate archive duration in the Jetstream status", (context) => {
+test("client keeps the main Jetstream summary concise and retains the approximate duration in details", (context) => {
   const component = harness(context);
-  const initial = { status: status("archive"), error: null };
+  const initial = { status: status("archive", "completed"), error: null };
   initial.status.monitor.archiveEstimate = { remainingSeconds: 7380, measuredAt: observedAt };
   const html = component.render(initial);
-  assert.match(html, /Jetstream:<\/strong> Historical replay in progress\. Approximate time remaining: 2 hours 3 minutes/);
-  assert.doesNotMatch(html, /Archive total and completion time are unknown/);
+  const summary = html.match(/<button\b[^>]*aria-label="Processing status details"[^>]*>[\s\S]*?<\/button>/)?.[0];
+  const details = html.match(/<dialog\b[\s\S]*?<\/dialog>/)?.[0];
+  assert.ok(summary, "The status summary must be an accessible dialog trigger.");
+  assert.match(summary, /class="ml-auto block w-fit max-w-full rounded-lg text-right/);
+  assert.match(summary, /Jetstream:<\/strong> Historical replay in progress\./);
+  assert.doesNotMatch(summary, /Approximate time remaining/);
+  assert.match(summary, /View detailed status/);
+  assert.match(details, /aria-labelledby="processing-status-0"/);
+  assert.match(details, /text-left/);
+  assert.match(details, /Processing status details/);
+  assert.match(details, /<h3 class="pt-2 font-medium text-foreground">Jetstream processing<\/h3>/);
+  assert.match(details, /<h3 class="pt-2 font-medium text-foreground">Jetstream processing<\/h3><p>Historical replay in progress\. Approximate time remaining: 2 hours 3 minutes\./);
+  assert.doesNotMatch(details, /Jetstream:<\/strong>/);
+  assert.match(details, /Activity started: <time dateTime="2026-10-05T12:00:00\+00:00">/);
+  assert.match(details, /Activity finished: <time dateTime="2026-10-05T12:00:00\+00:00">/);
+  assert.match(details, /Parent-URI backfill<\/h3><p>Completed\.<\/p><p>Activity started:/);
+  assert.doesNotMatch(details.slice(details.indexOf("Parent-URI backfill"), details.indexOf("Handle refresh")), /Outcome:/);
+  assert.match(details, /Status refreshes every 30 seconds/);
+  component.commit();
+  component.unmount();
+});
+
+test("client displays archive stall progress and scheduled retry timestamps without hiding heartbeat", (context) => {
+  const component = harness(context);
+  const initial = { status: status("archive", "backfill-running"), error: null };
+  initial.status.parentUriBackfill.pending = 5;
+  initial.status.parentUriBackfill.retryPending = 2;
+  initial.status.parentUriBackfill.retryDue = 1;
+  initial.status.parentUriBackfill.resolved = 3;
+  initial.status.parentUriBackfill.unavailable = 4;
+  initial.status.monitor.archiveReplay = {
+    noProgressSince: "2026-10-05T11:45:00Z", lastProgressAt: "2026-10-05T11:45:00Z",
+    stalledSince: "2026-10-05T11:50:00Z", consecutiveGenerationMismatches: 7,
+    nextRetryAt: "2026-10-05T12:05:00Z",
+  };
+  initial.status.monitor.archiveEstimate = { remainingSeconds: 7380, measuredAt: observedAt };
+  const html = component.render(initial);
+  const summary = html.match(/<button\b[^>]*aria-label="Processing status details"[^>]*>[\s\S]*?<\/button>/)?.[0];
+  const details = html.match(/<dialog\b[\s\S]*?<\/dialog>/)?.[0];
+  assert.doesNotMatch(html.slice(0, html.indexOf("<dialog")), /aria-label="Heartbeat"|♥|parent URIs/);
+  assert.match(details, /Jetstream heartbeat:/);
+  assert.match(summary, /Archive stalled/);
+  assert.match(details, /Last successful processing \/ durable progress/);
+  assert.match(details, /dateTime="2026-10-05T11:45:00Z"/);
+  assert.match(details, /Next scheduled retry/);
+  assert.match(details, /dateTime="2026-10-05T12:05:00Z"/);
+  assert.ok(details.indexOf("Next scheduled retry") < details.indexOf("Jetstream heartbeat"));
+  assert.ok(details.indexOf("Jetstream heartbeat") < details.indexOf("Parent-URI backfill"));
+  assert.doesNotMatch(summary, /Approximate time remaining/);
+  assert.doesNotMatch(details, /Approximate time remaining/);
+  assert.match(details, /Parent-URI heartbeat/);
+  assert.match(details, /7 parent-URI rows remaining/);
+  assert.match(details, /5 pending; 2 retryable \(1 due\); 3 resolved; 4 unavailable \(not retried\)/);
   component.commit();
   component.unmount();
 });

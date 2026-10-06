@@ -22,10 +22,12 @@ internal static class JetstreamMonitor
         ILogger logger, CancellationToken cancellationToken)
     {
         ProcessingActivity? lastActivity = null;
+        var archiveStall = new ArchiveStallTracker(TimeProvider.System, logger);
         try
         {
             await RetryLoop.RunAsync((progress, token) => RunAttemptAsync(dataSource, apiKey, service,
-                logger, progress, activity => lastActivity = activity, token), logger, cancellationToken);
+                logger, progress, activity => lastActivity = activity, archiveStall, token), logger, cancellationToken,
+                retrying: token => lastActivity?.ReportArchiveAsync(token) ?? Task.CompletedTask, archiveStall: archiveStall);
         }
         catch (Exception exception) when (!RetryLoop.IsRetryable(exception))
         {
@@ -42,7 +44,8 @@ internal static class JetstreamMonitor
     }
 
     private static async Task RunAttemptAsync(MySqlDataSource dataSource, string apiKey, Uri service,
-        ILogger logger, Action processedEvent, Action<ProcessingActivity> started, CancellationToken cancellationToken)
+        ILogger logger, Action processedEvent, Action<ProcessingActivity> started, ArchiveStallTracker archiveStall,
+        CancellationToken cancellationToken)
     {
         // A dedicated physical connection guarantees the advisory lock is released even on cancellation or failure.
         var connectionString = new MySqlConnectionStringBuilder(dataSource.ConnectionString) { Pooling = false };
@@ -52,20 +55,25 @@ internal static class JetstreamMonitor
         var store = new MonitorStore(connection);
         await store.InitializeAsync(cancellationToken);
         await using ProcessingActivity activity = await ProcessingActivity.StartAsync(dataSource, logger, "monitor", "archive",
-            ":jerry-no-v1", connection, TimeProvider.System, cancellationToken);
+            ":jerry-no-v1", connection, TimeProvider.System, cancellationToken, archiveStall);
         started(activity);
+        MonitorLog.JetstreamProcessingStarted(logger);
         await activity.ExecuteAsync(() => RetryLoop.RunAsync(
-            (progress, token) => ReplayAsync(apiKey, service, logger, store, activity, () =>
+            (progress, token) => ReplayAsync(apiKey, service, logger, store, activity, archiveStall, () =>
             {
                 progress();
                 processedEvent();
             }, token), logger, cancellationToken,
-            retrying: token => activity.ChangeAsync("retrying", token), retryDatabase: false),
+            retrying: async token =>
+            {
+                await activity.ChangeAsync("retrying", token);
+                await activity.ReportArchiveAsync(token);
+            }, retryDatabase: false, archiveStall: archiveStall),
             "stopped", cancellationToken, retryable: RetryLoop.IsRetryable);
     }
 
     private static async Task ReplayAsync(string apiKey, Uri service, ILogger logger, MonitorStore store,
-        ProcessingActivity activity, Action processedEvent, CancellationToken cancellationToken)
+        ProcessingActivity activity, ArchiveStallTracker archiveStall, Action processedEvent, CancellationToken cancellationToken)
     {
         // Every retry reloads durable progress and starts a new snapshot enumeration, allowing fresh archive planning
         // after an ETag/generation mismatch. Preserve the original request and entire checkpoint; do not patch offsets
@@ -78,6 +86,7 @@ internal static class JetstreamMonitor
         }
 
         MonitorLog.StartingReplay(logger, saved is not null);
+        await activity.ReportArchiveAsync(cancellationToken, attemptStarted: true);
         // The SDK must own its HTTP client: this version rejects cross-origin archive redirects when given an
         // external factory, including the archive's HTTPS CDN redirect. Its owned client already uses
         // idunno.Security.Ssrf for HTTP and WebSocket connections, with automatic redirects disabled.
@@ -114,6 +123,10 @@ internal static class JetstreamMonitor
                 // Publish in-memory progress only after persistence succeeds. A restarted segment can redeliver hits;
                 // ProcessAsync commits them idempotently before enumeration advances to the next checkpoint.
                 store.SaveProgress(next);
+                if (HasForwardArchiveProgress(progress.ArchiveCheckpoint, checkpoint))
+                {
+                    archiveStall.Progress();
+                }
                 progress = next;
             }, cancellationToken: cancellationToken,
                 onArchiveError: (sequence, exception) => HandleArchiveError(sequence, exception, logger)))
@@ -121,6 +134,10 @@ internal static class JetstreamMonitor
                 long started = Stopwatch.GetTimestamp();
                 await ProcessAsync(item, store, logger, cancellationToken);
                 MonitorMetrics.EventProcessed(EventSource.Archive, item.Kind, started);
+                if (archiveStall.Progress())
+                {
+                    await activity.ReportArchiveAsync(cancellationToken);
+                }
                 if (item.Sequence is long sequence)
                 {
                     lastProcessedSequence = Math.Max(lastProcessedSequence, sequence);
@@ -138,6 +155,8 @@ internal static class JetstreamMonitor
                 ?? throw new InvalidDataException("Snapshot completed without a pinned sealed tip.");
             progress = progress with { LiveAfterSeq = Math.Max(tip, progress.AfterSeq), ArchiveEstimate = null };
             store.SaveProgress(progress);
+            archiveStall.Progress();
+            await activity.ReportArchiveAsync(cancellationToken);
         }
 
         MonitorLog.ListeningToLive(logger, progress.LiveAfterSeq);
@@ -164,6 +183,10 @@ internal static class JetstreamMonitor
                 store.SaveProgress(next);
                 progress = next;
                 MonitorMetrics.EventProcessed(EventSource.Live, item.Kind, started);
+                if (archiveStall.Progress())
+                {
+                    await activity.ReportArchiveAsync(cancellationToken);
+                }
                 processedEvent();
             }
         }
@@ -179,6 +202,12 @@ internal static class JetstreamMonitor
             throw;
         }
     }
+
+    internal static bool HasForwardArchiveProgress(SnapshotCheckpoint? previous, SnapshotCheckpoint next) =>
+        next.PlanAfterSeq > (previous?.PlanAfterSeq ?? 0) ||
+        (previous is null || next.SegmentName == previous.SegmentName && next.SegmentChecksum == previous.SegmentChecksum) &&
+            (next.NextBlockIndex > (previous?.NextBlockIndex ?? 0) ||
+                next.NextByteOffset > (previous?.NextByteOffset ?? 0));
 
     internal static JetstreamArchiveErrorAction HandleArchiveError(long? sequence, Exception exception, ILogger logger)
     {

@@ -18,7 +18,8 @@ public sealed class ProcessingStatusTests
     public void FreshnessDoesNotInferRunningFromTerminalOrMissingActivity()
     {
         DateTimeOffset now = new(2026, 10, 5, 12, 0, 0, TimeSpan.Zero);
-        foreach (string phase in new[] { "archive", "live", "backfill-running", "retrying" })
+        foreach (string phase in new[] { "archive", "live", "backfill-running", "retrying",
+            "handle-refresh-idle", "handle-refresh-running", "handle-refresh-waiting" })
         {
             var activity = new WorkerActivity(phase, phase, false, now, now, now, null);
             Assert.IsTrue(activity.Evaluate(now.AddSeconds(59)).IsRunning);

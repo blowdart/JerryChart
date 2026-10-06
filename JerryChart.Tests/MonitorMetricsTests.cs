@@ -64,6 +64,39 @@ public sealed class MonitorMetricsTests
         Assert.DoesNotContain("Not a metric label.", readings.SelectMany(reading => reading.Tags.Values));
     }
 
+    /// <summary>Verifies unlabeled gauges distinguish stalled processing from retry and progress ages.</summary>
+    [TestMethod]
+    public void ArchiveGaugesFollowControllableTimeAndRecovery()
+    {
+        var clock = new ProcessingTestClock();
+        var tracker = new ArchiveStallTracker(clock, NullLogger.Instance);
+        MonitorMetrics.ObserveArchive(tracker, clock);
+        var readings = new List<Reading>();
+        using MeterListener listener = Listen(readings);
+        for (int i = 0; i < 3; i++)
+        {
+            tracker.Failure(new InvalidDataException("The archive server did not resume the expected segment generation."),
+                TimeSpan.FromSeconds(300));
+        }
+        clock.Advance(TimeSpan.FromMinutes(5));
+        listener.RecordObservableInstruments();
+        clock.Advance(TimeSpan.FromSeconds(30));
+        tracker.Failure(new InvalidDataException("The archive server did not resume the expected segment generation."),
+            TimeSpan.FromSeconds(300));
+        readings.Clear();
+        listener.RecordObservableInstruments();
+        Assert.AreEqual(1d, readings.Single(r => r.Name == "jerrychart.archive.stalled").Value);
+        Assert.AreEqual(4d, readings.Single(r => r.Name == "jerrychart.archive.generation_mismatches.consecutive").Value);
+        Assert.AreEqual(30d, readings.Single(r => r.Name == "jerrychart.archive.stall.duration.seconds").Value);
+        Assert.AreEqual(330d, readings.Single(r => r.Name == "jerrychart.archive.no_progress.seconds").Value);
+        Assert.AreEqual(300d, readings.Single(r => r.Name == "jerrychart.archive.retry.remaining.seconds").Value);
+        Assert.IsTrue(readings.All(r => r.Tags.Count == 0));
+        tracker.Progress();
+        readings.Clear();
+        listener.RecordObservableInstruments();
+        Assert.IsTrue(readings.All(r => r.Value == 0));
+    }
+
     /// <summary>Verifies retry and archive-error paths record failures but normal shutdown does not.</summary>
     /// <returns>A task representing bounded retry execution.</returns>
     [TestMethod]
@@ -175,6 +208,8 @@ public sealed class MonitorMetricsTests
             }
         };
         listener.SetMeasurementEventCallback<long>((instrument, value, tags, _) =>
+            readings.Add(new Reading(instrument.Name, value, ConvertTags(tags))));
+        listener.SetMeasurementEventCallback<int>((instrument, value, tags, _) =>
             readings.Add(new Reading(instrument.Name, value, ConvertTags(tags))));
         listener.SetMeasurementEventCallback<double>((instrument, value, tags, _) =>
             readings.Add(new Reading(instrument.Name, value, ConvertTags(tags))));

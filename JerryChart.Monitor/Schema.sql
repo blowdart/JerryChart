@@ -69,3 +69,12 @@ CREATE TABLE IF NOT EXISTS ProcessingActivity (
     HeartbeatAt DATETIME(6) NOT NULL,
     FinishedAt DATETIME(6) NULL
 ) ENGINE=InnoDB;
+
+CREATE TABLE IF NOT EXISTS ArchiveReplayActivity (
+    Resource VARCHAR(32) CHARACTER SET ascii COLLATE ascii_bin NOT NULL PRIMARY KEY,
+    NoProgressSince DATETIME(6) NOT NULL,
+    LastProgressAt DATETIME(6) NULL,
+    StalledSince DATETIME(6) NULL,
+    ConsecutiveGenerationMismatches INT NOT NULL,
+    NextRetryAt DATETIME(6) NULL
+) ENGINE=InnoDB;

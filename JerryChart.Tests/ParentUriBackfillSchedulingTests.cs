@@ -13,14 +13,14 @@ using MySqlConnector;
 
 namespace JerryChart.Tests;
 
-/// <summary>Verifies the daily UTC background service and cancellation without network calls.</summary>
+/// <summary>Verifies startup and daily UTC backfill scheduling and cancellation without network calls.</summary>
 [TestClass]
 public sealed class ParentUriBackfillSchedulingTests
 {
-    /// <summary>Verifies daily 03:00 UTC registration, no immediate startup run, and fresh invocation registrations.</summary>
+    /// <summary>Verifies startup invokes the shared entrypoint once and retains daily service registrations.</summary>
     /// <returns>A task representing registration and startup testing.</returns>
     [TestMethod]
-    public async Task DailyScheduleUsesUtcWithoutAnImmediateStartupInvocation()
+    public async Task StartupInvokesSharedEntrypointOnceWithDailyServiceRegistration()
     {
         var builder = Host.CreateApplicationBuilder();
         var logger = new ScheduleLogger();
@@ -29,7 +29,14 @@ public sealed class ParentUriBackfillSchedulingTests
         await using var source = new MySqlDataSourceBuilder(
             "Server=unused.invalid;Database=unused;User ID=unused").Build();
         builder.Services.AddSingleton(source);
-        builder.Services.AddSingleton(TimeProvider.System);
+        var clock = new ScheduleClock();
+        builder.Services.AddSingleton<TimeProvider>(clock);
+        int invocations = 0;
+        builder.Services.AddSingleton<Func<HttpClient>>(() =>
+        {
+            Interlocked.Increment(ref invocations);
+            throw new IOException("Simulated startup failure before any database or network access.");
+        });
         builder.Services.AddParentUriBackfillScheduler();
         Assert.AreEqual(ServiceLifetime.Transient,
             builder.Services.Single(service => service.ServiceType == typeof(ParentUriBackfillInvocation)).Lifetime);
@@ -39,12 +46,14 @@ public sealed class ParentUriBackfillSchedulingTests
         Assert.AreSame(host.Services.GetRequiredService<ScheduledParentUriBackfill>(),
             host.Services.GetServices<IHostedService>().Single(service => service is ScheduledParentUriBackfill));
         await host.StartAsync(TestContext.CancellationToken);
+        await clock.NextTimerAsync();
+        Assert.AreEqual(1, invocations);
         await host.StopAsync(TestContext.CancellationToken);
-        Assert.AreEqual(0, logger.StoppedInvocations, "Startup must not run a backfill.");
-        Assert.AreEqual(0, logger.Failures);
+        Assert.AreEqual(0, logger.StoppedInvocations);
+        Assert.AreEqual(1, logger.Failures, "A known startup failure must be logged without terminating scheduling.");
     }
 
-    /// <summary>Verifies the exact UTC boundary and skips missed slots rather than running at startup.</summary>
+    /// <summary>Verifies daily slots remain strictly future and UTC, including the exact boundary.</summary>
     [TestMethod]
     public void NextSlotIsStrictlyFutureAndAlwaysUtc()
     {
@@ -79,10 +88,10 @@ public sealed class ParentUriBackfillSchedulingTests
             .ApplicationStopping.IsCancellationRequested);
     }
 
-    /// <summary>Verifies the real service wait loop runs once at the UTC slot and awaits shutdown.</summary>
+    /// <summary>Verifies startup, the next UTC slot, no repeats or catch-up replay, and awaited shutdown.</summary>
     /// <returns>A task representing controlled-clock service execution.</returns>
     [TestMethod]
-    public async Task BackgroundLoopWaitsForSlotAndDoesNotRepeatOrCatchUp()
+    public async Task BackgroundLoopRunsAtStartupAndNextSlotWithoutRepeatingOrCatchingUp()
     {
         using var host = Host.CreateApplicationBuilder().Build();
         host.Services.GetRequiredService<IHostApplicationLifetime>().StopApplication();
@@ -99,17 +108,17 @@ public sealed class ParentUriBackfillSchedulingTests
         try
         {
             ScheduleTimer first = await clock.NextTimerAsync();
-            Assert.AreEqual(0, logger.StoppedInvocations);
+            Assert.AreEqual(1, logger.StoppedInvocations);
             Assert.AreEqual(TimeSpan.FromMinutes(1), first.DueTime);
             clock.Advance(TimeSpan.FromMinutes(1), first);
             ScheduleTimer second = await clock.NextTimerAsync();
-            Assert.AreEqual(1, logger.StoppedInvocations);
+            Assert.AreEqual(2, logger.StoppedInvocations);
             clock.Advance(TimeSpan.FromSeconds(1), second);
             ScheduleTimer third = await clock.NextTimerAsync();
-            Assert.AreEqual(1, logger.StoppedInvocations, "The same daily slot must not repeat.");
+            Assert.AreEqual(2, logger.StoppedInvocations, "The same daily slot must not repeat.");
             clock.Advance(TimeSpan.FromDays(3), third);
             await clock.NextTimerAsync();
-            Assert.AreEqual(2, logger.StoppedInvocations, "Missed slots must not be replayed individually.");
+            Assert.AreEqual(3, logger.StoppedInvocations, "Missed slots must not be replayed individually.");
         }
         finally
         {
@@ -118,9 +127,103 @@ public sealed class ParentUriBackfillSchedulingTests
         Assert.AreEqual(0, logger.Failures);
     }
 
-    private sealed class ScheduleClock : TimeProvider
+    /// <summary>Verifies startup exactly at or crossing 03:00 UTC consumes that slot without a duplicate immediate run.</summary>
+    /// <param name="crossesBoundary">Whether startup work advances the clock across the daily boundary.</param>
+    /// <returns>A task representing deterministic boundary testing.</returns>
+    [TestMethod]
+    [DataRow(false)]
+    [DataRow(true)]
+    public async Task StartupAtOrAcrossDailyBoundarySchedulesTomorrow(bool crossesBoundary)
     {
-        private DateTimeOffset _now = new(2026, 10, 5, 2, 59, 0, TimeSpan.Zero);
+        using var host = Host.CreateApplicationBuilder().Build();
+        await using var source = new MySqlDataSourceBuilder(
+            "Server=unused.invalid;Database=unused;User ID=unused").Build();
+        DateTimeOffset slot = new(2026, 10, 5, 3, 0, 0, TimeSpan.Zero);
+        var clock = new ScheduleClock(crossesBoundary ? slot.AddSeconds(-1) : slot);
+        var logger = new ScheduleLogger();
+        int invocations = 0;
+        var invocation = new ParentUriBackfillInvocation(source,
+            host.Services.GetRequiredService<ILogger<ParentUriBackfillInvocation>>(), clock, () =>
+            {
+                Interlocked.Increment(ref invocations);
+                if (crossesBoundary && invocations == 1)
+                {
+                    clock.SetUtcNow(slot.AddDays(3).AddSeconds(1));
+                }
+                throw new IOException("Simulated startup work without database access.");
+            });
+        using var scheduled = new ScheduledParentUriBackfill(invocation,
+            host.Services.GetRequiredService<IHostApplicationLifetime>(), logger, clock);
+        await scheduled.StartAsync(CancellationToken.None);
+        try
+        {
+            ScheduleTimer first = await clock.NextTimerAsync();
+            Assert.AreEqual(1, invocations);
+            Assert.AreEqual(TimeSpan.FromMinutes(1), first.DueTime);
+            DateTimeOffset next = ScheduledParentUriBackfill.NextRun(clock.GetUtcNow());
+            Assert.AreEqual(crossesBoundary ? slot.AddDays(4) : slot.AddDays(1), next);
+            clock.Advance(next - clock.GetUtcNow() - TimeSpan.FromSeconds(1), first);
+            ScheduleTimer nearSlot = await clock.NextTimerAsync();
+            Assert.AreEqual(1, invocations, "Startup must consume the current/crossed slot, not replay it.");
+            Assert.AreEqual(TimeSpan.FromSeconds(1), nearSlot.DueTime);
+            clock.Advance(TimeSpan.FromSeconds(1), nearSlot);
+            await clock.NextTimerAsync();
+            Assert.AreEqual(2, invocations, "The next daily slot must still execute normally.");
+        }
+        finally
+        {
+            await scheduled.StopAsync(CancellationToken.None).WaitAsync(TimeSpan.FromSeconds(5), TestContext.CancellationToken);
+        }
+    }
+
+    /// <summary>Verifies startup holds the overlap guard until shared work finishes and shutdown awaits it.</summary>
+    /// <returns>A task representing bounded overlap and cancellation testing.</returns>
+    [TestMethod]
+    public async Task StartupSuppressesOverlappingInvocationsAndShutdownAwaitsCompletion()
+    {
+        using var host = Host.CreateApplicationBuilder().Build();
+        await using var source = new MySqlDataSourceBuilder(
+            "Server=unused.invalid;Database=unused;User ID=unused").Build();
+        var clock = new ScheduleClock();
+        var logger = new ScheduleLogger();
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        using var release = new ManualResetEventSlim();
+        int invocations = 0;
+        var invocation = new ParentUriBackfillInvocation(source,
+            host.Services.GetRequiredService<ILogger<ParentUriBackfillInvocation>>(), clock, () =>
+            {
+                Interlocked.Increment(ref invocations);
+                entered.TrySetResult();
+                if (!release.Wait(TimeSpan.FromSeconds(10), TestContext.CancellationToken))
+                {
+                    throw new AssertFailedException("The startup invocation must be released by the test.");
+                }
+                throw new IOException("Simulated bounded startup work without database access.");
+            });
+        using var scheduled = new ScheduledParentUriBackfill(invocation,
+            host.Services.GetRequiredService<IHostApplicationLifetime>(), logger, clock);
+        await scheduled.StartAsync(CancellationToken.None);
+        try
+        {
+            await entered.Task.WaitAsync(TimeSpan.FromSeconds(5), TestContext.CancellationToken);
+            await scheduled.InvokeAsync(CancellationToken.None);
+            Assert.AreEqual(1, invocations, "An active startup run must suppress another scheduler invocation.");
+            Task stop = scheduled.StopAsync(CancellationToken.None);
+            Assert.IsFalse(stop.IsCompleted, "Shutdown must await the active invocation.");
+            release.Set();
+            await stop.WaitAsync(TimeSpan.FromSeconds(5), TestContext.CancellationToken);
+            Assert.AreEqual(1, invocations);
+        }
+        finally
+        {
+            release.Set();
+            await scheduled.StopAsync(CancellationToken.None).WaitAsync(TimeSpan.FromSeconds(5), TestContext.CancellationToken);
+        }
+    }
+
+    private sealed class ScheduleClock(DateTimeOffset? now = null) : TimeProvider
+    {
+        private DateTimeOffset _now = now ?? new(2026, 10, 5, 2, 59, 0, TimeSpan.Zero);
         private readonly Channel<ScheduleTimer> _timers = Channel.CreateUnbounded<ScheduleTimer>();
         public override DateTimeOffset GetUtcNow() => _now;
         public override ITimer CreateTimer(TimerCallback callback, object? state, TimeSpan dueTime, TimeSpan period)
@@ -139,6 +242,7 @@ public sealed class ParentUriBackfillSchedulingTests
             _now += elapsed;
             timer.Fire();
         }
+        internal void SetUtcNow(DateTimeOffset now) => _now = now;
     }
 
     private sealed class ScheduleTimer(TimerCallback callback, object? state, TimeSpan dueTime) : ITimer

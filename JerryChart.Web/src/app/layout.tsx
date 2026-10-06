@@ -14,8 +14,20 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
+  metadataBase: process.env.SITE_URL ? new URL(process.env.SITE_URL) : undefined,
   title: "Jerry No",
   description: "Statistics on Bluesky's collective failure to make Jerry Chen reconsider his choices",
+  openGraph: {
+    title: "Jerry No",
+    description: "Bluesky's collective failure to make Jerry reconsider.",
+    siteName: "Jerry No",
+    type: "website",
+  },
+  twitter: {
+    card: "summary_large_image",
+    title: "Jerry No",
+    description: "Bluesky's collective failure to make Jerry reconsider.",
+  },
 };
 
 export default function RootLayout({ children }: LayoutProps<"/">) {

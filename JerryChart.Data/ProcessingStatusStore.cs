@@ -27,7 +27,11 @@ public sealed class ProcessingStatusStore(MySqlDataSource dataSource, TimeProvid
             SELECT Resource, Phase, StartedAt, ChangedAt, HeartbeatAt, FinishedAt FROM ProcessingActivity;
             SELECT UpdatedAt,
                 JSON_UNQUOTE(JSON_EXTRACT(CheckpointJson, '$.ArchiveEstimate.MeasuredAt')),
-                CAST(JSON_UNQUOTE(JSON_EXTRACT(CheckpointJson, '$.ArchiveEstimate.RemainingSeconds')) AS DOUBLE)
+                CAST(JSON_UNQUOTE(JSON_EXTRACT(CheckpointJson, '$.ArchiveEstimate.RemainingSeconds')) AS DOUBLE),
+                JSON_UNQUOTE(JSON_EXTRACT(CheckpointJson, '$.ArchiveThroughput.WindowStartedAt')),
+                JSON_UNQUOTE(JSON_EXTRACT(CheckpointJson, '$.ArchiveThroughput.MeasuredAt')),
+                CAST(JSON_UNQUOTE(JSON_EXTRACT(CheckpointJson, '$.ArchiveThroughput.DeliveredEvents')) AS SIGNED),
+                CAST(JSON_UNQUOTE(JSON_EXTRACT(CheckpointJson, '$.ArchiveThroughput.WindowSeconds')) AS DOUBLE)
             FROM JetstreamReplayProgress WHERE MonitorId = 'jerry-no-v1';
             SELECT NoProgressSince, LastProgressAt, StalledSince, ConsecutiveGenerationMismatches, NextRetryAt
             FROM ArchiveReplayActivity WHERE Resource = 'monitor';
@@ -64,6 +68,7 @@ public sealed class ProcessingStatusStore(MySqlDataSource dataSource, TimeProvid
         await reader.NextResultAsync(cancellationToken);
         DateTimeOffset? checkpoint = null;
         ArchiveReplayEstimate? estimate = null;
+        ArchiveReplayThroughput? throughput = null;
         if (await reader.ReadAsync(cancellationToken))
         {
             checkpoint = Utc(reader, 0);
@@ -71,6 +76,12 @@ public sealed class ProcessingStatusStore(MySqlDataSource dataSource, TimeProvid
             {
                 estimate = new(reader.GetDouble(2),
                     DateTimeOffset.Parse(reader.GetString(1), CultureInfo.InvariantCulture));
+            }
+            if (!reader.IsDBNull(3) && !reader.IsDBNull(4) && !reader.IsDBNull(5) && !reader.IsDBNull(6))
+            {
+                throughput = new(reader.GetInt64(5), reader.GetDouble(6),
+                    DateTimeOffset.Parse(reader.GetString(3), CultureInfo.InvariantCulture),
+                    DateTimeOffset.Parse(reader.GetString(4), CultureInfo.InvariantCulture));
             }
         }
         await reader.NextResultAsync(cancellationToken);
@@ -85,7 +96,8 @@ public sealed class ProcessingStatusStore(MySqlDataSource dataSource, TimeProvid
         now = timeProvider.GetUtcNow();
         WorkerActivity evaluatedMonitor = monitor.Evaluate(now);
         return new(now, new(evaluatedMonitor, checkpoint,
-            archiveReplay?.StalledSince is null ? estimate?.Evaluate(evaluatedMonitor, now) : null, archiveReplay),
+            archiveReplay?.StalledSince is null ? estimate?.Evaluate(evaluatedMonitor, now) : null, archiveReplay,
+            archiveReplay?.StalledSince is null ? throughput?.Evaluate(evaluatedMonitor, now) : null),
             parentQueue with { Activity = parent.Evaluate(now) },
             new(handles.Evaluate(now), reader.GetInt64(0), reader.GetInt64(1), Utc(reader, 2)));
     }
@@ -101,6 +113,32 @@ public sealed class ProcessingStatusStore(MySqlDataSource dataSource, TimeProvid
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
 
         return await reader.ReadAsync(cancellationToken) ? ReadArchiveReplay(reader) : null;
+    }
+
+    internal async Task ArchiveThroughputAsync(string resource, string runId, ArchiveReplayThroughput? throughput,
+        CancellationToken cancellationToken)
+    {
+        await using var connection = await dataSource.OpenConnectionAsync(cancellationToken);
+        await using var command = connection.CreateCommand();
+        command.CommandTimeout = 5;
+        // Only diagnostic JSON changes. The SDK checkpoint, fingerprint, and durable checkpoint timestamp stay intact.
+        command.CommandText = """
+            UPDATE JetstreamReplayProgress p
+            JOIN ProcessingActivity a ON a.Resource = @resource AND a.RunId = @run AND a.FinishedAt IS NULL
+            SET p.CheckpointJson = IF(@events IS NULL OR a.Phase <> 'archive',
+                JSON_SET(p.CheckpointJson, '$.ArchiveThroughput', NULL),
+                JSON_SET(p.CheckpointJson, '$.ArchiveThroughput',
+                    JSON_OBJECT('DeliveredEvents', @events, 'WindowSeconds', @seconds,
+                        'WindowStartedAt', @started, 'MeasuredAt', @measured)))
+            WHERE p.MonitorId = 'jerry-no-v1'
+            """;
+        command.Parameters.AddWithValue("@resource", resource);
+        command.Parameters.AddWithValue("@run", runId);
+        command.Parameters.AddWithValue("@events", throughput?.DeliveredEvents);
+        command.Parameters.AddWithValue("@seconds", throughput?.WindowSeconds);
+        command.Parameters.AddWithValue("@started", throughput?.WindowStartedAt.ToString("O", CultureInfo.InvariantCulture));
+        command.Parameters.AddWithValue("@measured", throughput?.MeasuredAt.ToString("O", CultureInfo.InvariantCulture));
+        await command.ExecuteNonQueryAsync(cancellationToken);
     }
 
     internal async Task ArchiveReplayAsync(string resource, string runId, ArchiveReplayStatus status,

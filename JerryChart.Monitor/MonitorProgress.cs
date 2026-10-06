@@ -23,6 +23,8 @@ internal sealed record MonitorProgress
     public long? ArchiveHighWaterSeq { get; init; }
     /// <summary>Gets the approximate remaining snapshot duration measured at the last checkpoint, or null during warm-up.</summary>
     public ArchiveReplayEstimate? ArchiveEstimate { get; init; }
+    /// <summary>Gets the measured archive delivery window, independent of the checkpoint's sequence.</summary>
+    public ArchiveReplayThroughput? ArchiveThroughput { get; init; }
 
     internal MonitorProgress ReturnToArchive()
     {
@@ -32,6 +34,7 @@ internal sealed record MonitorProgress
             ArchiveCheckpoint = null,
             ArchiveHighWaterSeq = null,
             ArchiveEstimate = null,
+            ArchiveThroughput = null,
             LiveAfterSeq = null
         };
     }

@@ -21,6 +21,13 @@ internal sealed class ProcessingActivity : IAsyncDisposable
     private ArchiveStallTracker? _archiveStall;
     private readonly SemaphoreSlim _archiveReport = new(1, 1);
     private bool _disposed;
+    private ArchiveTimeEstimator? _archiveEstimator;
+
+    internal ArchiveTimeEstimator? ArchiveEstimator
+    {
+        get => Volatile.Read(ref _archiveEstimator);
+        set => Volatile.Write(ref _archiveEstimator, value);
+    }
 
     private ProcessingActivity(ProcessingStatusStore store, ILogger logger, string resource,
         int connectionId)
@@ -94,6 +101,8 @@ internal sealed class ProcessingActivity : IAsyncDisposable
                     _archiveStall.AttemptStarted();
                 }
                 await _store.ArchiveReplayAsync(_resource, _runId, _archiveStall.Snapshot(), cancellationToken);
+                await _store.ArchiveThroughputAsync(_resource, _runId,
+                    ArchiveEstimator?.MeasureThroughput(), cancellationToken);
             }
             finally
             {
@@ -108,6 +117,10 @@ internal sealed class ProcessingActivity : IAsyncDisposable
 
     internal async Task ChangeAsync(string phase, CancellationToken cancellationToken)
     {
+        if (phase != "archive")
+        {
+            ArchiveEstimator = null;
+        }
         if (!await _store.ChangeAsync(_resource, _runId, phase, false, cancellationToken))
         {
             throw new InvalidOperationException("The processing run has been replaced by another owner.");
@@ -159,6 +172,7 @@ internal sealed class ProcessingActivity : IAsyncDisposable
 
     internal async Task FinishAsync(string phase)
     {
+        ArchiveEstimator = null;
         if (_archiveStall is not null)
         {
             using var diagnosticTimeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));

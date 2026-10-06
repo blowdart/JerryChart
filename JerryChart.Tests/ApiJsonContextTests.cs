@@ -24,7 +24,8 @@ public sealed class ApiJsonContextTests
         var activity = new WorkerActivity("archive", "archive", true, now, now, now, null);
         var status = new ProcessingStatus(now,
             new MonitorProcessingStatus(activity, now, new ArchiveReplayEstimate(120, now),
-                new ArchiveReplayStatus(now.AddMinutes(-10), now.AddMinutes(-10), now.AddMinutes(-5), 7, now.AddMinutes(5))),
+                new ArchiveReplayStatus(now.AddMinutes(-10), now.AddMinutes(-10), now.AddMinutes(-5), 7, now.AddMinutes(5)),
+                new ArchiveReplayThroughput(240, 120, now.AddMinutes(-2), now)),
             new ParentUriProcessingStatus(activity, 1, 2, 3, 4, 5),
             new HandleRefreshProcessingStatus(activity with { Phase = "handle-refresh-waiting", State = "handle-refresh-waiting" },
                 9, 2, now.AddMinutes(-1)));
@@ -41,6 +42,15 @@ public sealed class ApiJsonContextTests
         Assert.AreEqual(now.AddMinutes(-5), replay.GetProperty("stalledSince").GetDateTimeOffset());
         Assert.AreEqual(now.AddMinutes(-10), replay.GetProperty("lastProgressAt").GetDateTimeOffset());
         Assert.AreEqual(now.AddMinutes(5), replay.GetProperty("nextRetryAt").GetDateTimeOffset());
+        JsonElement throughput = document.RootElement.GetProperty("monitor").GetProperty("archiveThroughput");
+        Assert.AreEqual(240L, throughput.GetProperty("deliveredEvents").GetInt64());
+        Assert.AreEqual(120, throughput.GetProperty("windowSeconds").GetDouble());
+        Assert.AreEqual(2, throughput.GetProperty("eventsPerSecond").GetDouble());
+        Assert.AreEqual(500_000, throughput.GetProperty("microsecondsPerEvent").GetDouble());
+        Assert.AreEqual(now.AddMinutes(-2), throughput.GetProperty("windowStartedAt").GetDateTimeOffset());
+        Assert.AreEqual(now, throughput.GetProperty("measuredAt").GetDateTimeOffset());
+        using JsonDocument legacyMonitor = JsonDocument.Parse(Serialize(new MonitorProcessingStatus(activity, null)));
+        Assert.AreEqual(JsonValueKind.Null, legacyMonitor.RootElement.GetProperty("archiveThroughput").ValueKind);
         JsonElement handles = document.RootElement.GetProperty("handleRefresh");
         Assert.AreEqual(9, handles.GetProperty("pending").GetInt64());
         Assert.AreEqual(2, handles.GetProperty("due").GetInt64());

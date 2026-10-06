@@ -19,6 +19,7 @@ export interface ProcessingStatus {
     checkpointUpdatedAt: string | null;
     archiveEstimate: ArchiveReplayEstimate | null;
     archiveReplay?: ArchiveReplayStatus | null;
+    archiveThroughput?: ArchiveReplayThroughput | null;
   };
   parentUriBackfill: {
     activity: WorkerActivity;
@@ -39,6 +40,15 @@ export interface ProcessingStatus {
 export interface ArchiveReplayEstimate {
   remainingSeconds: number;
   measuredAt: string;
+}
+
+export interface ArchiveReplayThroughput {
+  deliveredEvents: number;
+  windowSeconds: number;
+  windowStartedAt: string;
+  measuredAt: string;
+  eventsPerSecond: number;
+  microsecondsPerEvent: number;
 }
 
 export interface ArchiveReplayStatus {
@@ -88,11 +98,26 @@ function archiveReplay(value: unknown): value is ArchiveReplayStatus | null | un
     count(value.consecutiveGenerationMismatches));
 }
 
+function archiveThroughput(value: unknown): value is ArchiveReplayThroughput | null | undefined {
+  if (value === undefined || value === null) return true;
+  if (!object(value) || !count(value.deliveredEvents) || value.deliveredEvents === 0 ||
+    typeof value.windowSeconds !== "number" || !Number.isFinite(value.windowSeconds) || value.windowSeconds < 120 ||
+    !utc(value.windowStartedAt) || !utc(value.measuredAt) ||
+    Date.parse(value.windowStartedAt) > Date.parse(value.measuredAt)) return false;
+  // Derived rates must agree with the measured count and elapsed window, not sequence distance.
+  const matches = (actual: unknown, expected: number) =>
+    typeof actual === "number" && Number.isFinite(actual) && actual > 0 &&
+    Math.abs(actual - expected) <= expected * 1e-12;
+  return matches(value.eventsPerSecond, value.deliveredEvents / value.windowSeconds) &&
+    matches(value.microsecondsPerEvent, value.windowSeconds * 1_000_000 / value.deliveredEvents);
+}
+
 export function isProcessingStatus(value: unknown): value is ProcessingStatus {
   if (!object(value) || !utc(value.observedAt) || !object(value.monitor) ||
     !activity(value.monitor.activity) || !nullableUtc(value.monitor.checkpointUpdatedAt) ||
     !archiveEstimate(value.monitor.archiveEstimate) ||
     !archiveReplay(value.monitor.archiveReplay) ||
+    !archiveThroughput(value.monitor.archiveThroughput) ||
     !object(value.parentUriBackfill) || !activity(value.parentUriBackfill.activity)) return false;
   const queue = value.parentUriBackfill;
   const handles = value.handleRefresh;
@@ -108,6 +133,23 @@ function heartbeatExpired(activity: WorkerActivity, observedAt: string, elapsedM
   return activePhases.includes(activity.phase) &&
     (activity.heartbeatAt === null || activity.state === "stale" ||
       Date.parse(observedAt) + Math.max(0, elapsedMilliseconds) - Date.parse(activity.heartbeatAt) >= 60_000);
+}
+
+export function replayThroughputMessage(
+  monitor: ProcessingStatus["monitor"], observedAt: string, elapsedMilliseconds: number,
+): string | null {
+  const measurement = monitor.archiveThroughput;
+  const activity = monitor.activity;
+  const now = Date.parse(observedAt) + Math.max(0, elapsedMilliseconds);
+  if (!measurement || !archiveThroughput(measurement) || monitor.archiveReplay?.stalledSince ||
+    activity.phase !== "archive" || activity.state !== "archive" || !activity.isRunning ||
+    heartbeatExpired(activity, observedAt, elapsedMilliseconds) ||
+    Date.parse(measurement.measuredAt) > now || now - Date.parse(measurement.measuredAt) >= 60_000 ||
+    Date.parse(measurement.windowStartedAt) < Date.parse(activity.changedAt!) ||
+    Date.parse(measurement.windowStartedAt) < Date.parse(activity.startedAt!)) return null;
+  const format = (value: number) => value.toLocaleString("en-US", { maximumSignificantDigits: 3 });
+  return `Replay throughput (window average): ${format(measurement.eventsPerSecond)} events/s ` +
+    `(${format(measurement.microsecondsPerEvent)} µs/event).`;
 }
 
 export function activitySummary(

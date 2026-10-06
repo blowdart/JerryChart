@@ -108,9 +108,10 @@ internal static class JetstreamMonitor
 
         if (progress.LiveAfterSeq is null)
         {
-            var estimator = new ArchiveTimeEstimator(progress.ArchiveHighWaterSeq ?? progress.AfterSeq, TimeProvider.System);
             long lastProcessedSequence = progress.AfterSeq;
             await activity.ChangeAsync("archive", cancellationToken);
+            var estimator = new ArchiveTimeEstimator(progress.ArchiveHighWaterSeq ?? progress.AfterSeq, TimeProvider.System);
+            activity.ArchiveEstimator = estimator;
             await foreach (JetstreamEvent item in jetstream.SnapshotAsync(request, progress.ArchiveCheckpoint, checkpoint =>
             {
                 ArchiveReplayEstimate? estimate = estimator.Measure(lastProcessedSequence, checkpoint.SealedTipSeq);
@@ -118,7 +119,8 @@ internal static class JetstreamMonitor
                 {
                     ArchiveCheckpoint = checkpoint,
                     ArchiveHighWaterSeq = estimator.HighWaterSequence,
-                    ArchiveEstimate = estimate
+                    ArchiveEstimate = estimate,
+                    ArchiveThroughput = estimator.MeasureThroughput()
                 };
                 // Publish in-memory progress only after persistence succeeds. A restarted segment can redeliver hits;
                 // ProcessAsync commits them idempotently before enumeration advances to the next checkpoint.
@@ -131,6 +133,7 @@ internal static class JetstreamMonitor
             }, cancellationToken: cancellationToken,
                 onArchiveError: (sequence, exception) => HandleArchiveError(sequence, exception, logger)))
             {
+                estimator.Delivered();
                 long started = Stopwatch.GetTimestamp();
                 await ProcessAsync(item, store, logger, cancellationToken);
                 MonitorMetrics.EventProcessed(EventSource.Archive, item.Kind, started);
@@ -153,7 +156,11 @@ internal static class JetstreamMonitor
 
             long tip = progress.ArchiveCheckpoint?.SealedTipSeq
                 ?? throw new InvalidDataException("Snapshot completed without a pinned sealed tip.");
-            progress = progress with { LiveAfterSeq = Math.Max(tip, progress.AfterSeq), ArchiveEstimate = null };
+            activity.ArchiveEstimator = null;
+            progress = progress with
+            {
+                LiveAfterSeq = Math.Max(tip, progress.AfterSeq), ArchiveEstimate = null, ArchiveThroughput = null
+            };
             store.SaveProgress(progress);
             archiveStall.Progress();
             await activity.ReportArchiveAsync(cancellationToken);

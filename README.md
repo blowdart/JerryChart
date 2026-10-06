@@ -460,6 +460,29 @@ when the usual exporter environment variables are supplied.
 
 ### Approximate archive time remaining
 
+The **Jetstream section of the detailed processing-status dialog** also shows
+`Replay throughput (window average): X events/s (Y µs/event)` when available.
+This uses actual events delivered by archive enumeration, never sequence distance,
+matching replies, or an assumed historical rate. The window is the entire current
+uninterrupted replay attempt, starting immediately before enumeration, with a
+two-minute warm-up. A monotonic clock includes planning, downloads, decompression,
+parsing, processing, checkpoint writes, and active quota/network waits. The
+µs/event value is the reciprocal amortized average, **not individual-event latency**.
+Only events yielded by the filtered SDK enumeration count; filtered-out/skipped
+records do not, and redeliveries count again. Long-running attempts smooth recent
+rate changes; this is not an instantaneous or rolling-window rate.
+
+The optional `monitor.archiveThroughput` includes the delivered count, elapsed
+window seconds, UTC window start/measurement times, and the derived rates. It is
+refreshed through the existing 15-second status heartbeat and checkpoint writes,
+not per-event database writes. Heartbeat updates touch only this diagnostic JSON,
+not the SDK checkpoint, request fingerprint, or checkpoint update timestamp.
+Retries start a new window. The API/browser omit measurements during retry/live
+phases, stalls, stale heartbeats, previous attempts, or at 60 seconds of measurement
+age; the monitor also omits them after ten minutes without a delivery. Shorter
+active waits keep extending the denominator even without new deliveries.
+Older checkpoints and API snapshots lacking this optional field remain valid.
+
 The processing status shows approximate time remaining for the **pinned archive
 snapshot**, not the continually moving live stream. The monitor samples forward
 sequence progress as events are processed, using up to ten minutes of

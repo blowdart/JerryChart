@@ -7,6 +7,10 @@ export interface BlueskyProfile {
   followersCount?: number;
   followsCount?: number;
   postsCount?: number;
+  verification?: {
+    verifiedStatus: string;
+    trustedVerifierStatus: string;
+  };
 }
 
 const cacheLifetime = 15 * 60 * 1000;
@@ -29,6 +33,12 @@ function isProfile(value: unknown, did: string): value is BlueskyProfile {
   for (const field of ["followersCount", "followsCount", "postsCount"] as const) {
     if (field in value && (typeof value[field] !== "number" ||
         !Number.isSafeInteger(value[field]) || value[field] < 0)) return false;
+  }
+  if ("verification" in value) {
+    if (!isRecord(value.verification)) return false;
+    for (const field of ["verifiedStatus", "trustedVerifierStatus"] as const) {
+      if (typeof value.verification[field] !== "string" || value.verification[field].length === 0) return false;
+    }
   }
   return true;
 }

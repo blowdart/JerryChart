@@ -132,6 +132,58 @@ test("profile display text removes directional controls and bounds stacked marks
   assert.equal(profileDisplayText("x" + "\u030d".repeat(20) + "y"), "x" + "\u030d".repeat(3) + "y");
 });
 
+test("profile fetch validates optional verification metadata without rejecting future status strings", async (context) => {
+  let verification;
+  replaceFetch(context, async () => response({
+    did: rightJerryDid, handle: "example.test",
+    ...(verification === undefined ? {} : { verification }),
+  }));
+  for (verification of [undefined, ...["valid", "invalid", "none", "future"].map((verifiedStatus) => ({
+    verifiedStatus, trustedVerifierStatus: "none",
+  }))]) {
+    const { getBlueskyProfile } = modules()("lib\\bluesky-profile.ts");
+    const profile = await getBlueskyProfile(rightJerryDid);
+    assert.deepEqual(profile.verification, verification);
+  }
+  for (verification of [null, [], {}, { verifiedStatus: true, trustedVerifierStatus: "none" },
+    { verifiedStatus: "valid" }, { verifiedStatus: "", trustedVerifierStatus: "none" },
+    { verifiedStatus: "valid", trustedVerifierStatus: 1 }]) {
+    const { getBlueskyProfile } = modules()("lib\\bluesky-profile.ts");
+    await assert.rejects(getBlueskyProfile(rightJerryDid), /invalid profile/);
+  }
+});
+
+test("profile card shows an accessible nonshrinking badge beside only valid verified names", () => {
+  for (const verification of [undefined, ...["valid", "invalid", "none", "future"].map((verifiedStatus) => ({
+    verifiedStatus, trustedVerifierStatus: "valid",
+  }))]) {
+    let state = 0;
+    const passthrough = ({ children }) => React.createElement("div", null, children);
+    const { ProfileHoverCard } = modules({
+      react: {
+        ...React,
+        useState: (initial) => [state++ === 2
+          ? { did: rightJerryDid, handle: "example.test", displayName: "Long name".repeat(60), verification }
+          : initial, () => {}],
+      },
+      "@base-ui/react/preview-card": {
+        PreviewCard: Object.fromEntries(["Root", "Trigger", "Portal", "Positioner", "Popup"]
+          .map((name) => [name, passthrough])),
+      },
+    })("components\\profile-hover-card.tsx");
+    const markup = renderToStaticMarkup(React.createElement(ProfileHoverCard, {
+      author: { did: rightJerryDid, handle: "example.test" },
+    }));
+    assert.equal(markup.includes('aria-label="Verified account"'), verification?.verifiedStatus === "valid");
+    assert.match(markup, /min-w-0 truncate font-semibold/);
+    if (verification?.verifiedStatus === "valid") {
+      assert.match(markup, /role="img"/);
+      assert.match(markup, /size-4 shrink-0/);
+      assert.match(markup, /<\/p><svg/);
+    }
+  }
+});
+
 test("profile descriptions trim only leading whitespace and omit whitespace-only text", () => {
   for (const [description, expected] of [
     [" \r\n\n\tBiography\nSecond line  ", "Biography\nSecond line  "],

@@ -7,6 +7,7 @@ import { getBlueskyProfile, profileAvatarUrl, type BlueskyProfile } from "@/lib/
 import { authorLabel, type TopReplyAuthor } from "@/lib/reply-authors";
 import { ProfileText } from "@/components/profile-text";
 import { profileDisplayText } from "@/lib/profile-display-text";
+import { VerificationBadge } from "@/components/verification-badge";
 
 export function ProfileHoverCard({ author, clickable = false, children, className }: {
   author: Pick<TopReplyAuthor, "did" | "handle" | "accountStatus">;
@@ -98,7 +99,10 @@ export function ProfileHoverCard({ author, clickable = false, children, classNam
                     <Image src={avatar} alt="" width={48} height={48} unoptimized className="size-12 shrink-0 rounded-full object-cover" />
                   )}
                   <div className="min-w-0 flex-1">
-                    <p className="truncate font-semibold" dir="auto" title={displayName}>{displayName}</p>
+                    <div className="flex items-center gap-1">
+                      <p className="min-w-0 truncate font-semibold" dir="auto" title={displayName}>{displayName}</p>
+                      {profile.verification?.verifiedStatus === "valid" && <VerificationBadge />}
+                    </div>
                     <p className="truncate text-muted-foreground" dir="ltr" title={`@${profile.handle}`}>@{profile.handle}</p>
                   </div>
                 </div>

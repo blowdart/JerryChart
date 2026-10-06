@@ -39,7 +39,7 @@ public sealed class ActorProfileClientTests
         Assert.IsNotNull(requested);
         Assert.AreEqual("public.api.bsky.app", requested.Host);
         Assert.Contains("actors=did%3Aplc%3Afirst", requested.Query);
-        Assert.AreEqual(3, requested.Query.Split('&').Length);
+        Assert.HasCount(3, requested.Query.Split('&'));
     }
 
     /// <summary>Verifies that the endpoint's 25-actor limit is enforced before sending a request.</summary>
@@ -99,7 +99,7 @@ public sealed class ActorProfileClientTests
         await client.GetAsync([Actor("did:plc:first")], CancellationToken.None);
         await client.GetAsync([Actor("did:plc:second")], CancellationToken.None);
 
-        CollectionAssert.AreEqual(new[] { TimeSpan.FromSeconds(5) }, waits);
+        Assert.AreSequenceEqual(new[] { TimeSpan.FromSeconds(5) }, waits);
     }
 
     /// <summary>Verifies server rate-limit waits are global and are never capped to five minutes.</summary>
@@ -159,7 +159,7 @@ public sealed class ActorProfileClientTests
         }
 
         await client.GetAsync([Actor("did:plc:second")], CancellationToken.None);
-        CollectionAssert.AreEqual(new[] { TimeSpan.FromSeconds(expectedSeconds) }, waits);
+        Assert.AreSequenceEqual(new[] { TimeSpan.FromSeconds(expectedSeconds) }, waits);
         Assert.AreEqual(2, calls);
     }
 

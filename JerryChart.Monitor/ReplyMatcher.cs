@@ -37,12 +37,14 @@ internal static partial class ReplyMatcher
         if (commit.Commit.Record is not JsonElement { ValueKind: JsonValueKind.Object } record)
         {
             MonitorLog.MissingObjectRecord(logger, atUri, item.Sequence);
+            MonitorMetrics.Error(MetricOperation.ReplyValidation, ErrorCategory.InvalidData);
             return null;
         }
 
         if (!record.TryGetProperty("text", out JsonElement text) || text.ValueKind != JsonValueKind.String)
         {
             MonitorLog.MissingText(logger, atUri, item.Sequence);
+            MonitorMetrics.Error(MetricOperation.ReplyValidation, ErrorCategory.InvalidData);
             return null;
         }
 
@@ -79,6 +81,7 @@ internal static partial class ReplyMatcher
         catch (Exception exception) when (exception is JsonException or ArgumentException)
         {
             MonitorLog.MalformedReply(logger, exception, atUri, item.Sequence);
+            MonitorMetrics.Error(MetricOperation.ReplyValidation, exception);
             return null;
         }
     }

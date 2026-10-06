@@ -48,6 +48,7 @@ public static class MonitorSchema
         command.CommandText = await reader.ReadToEndAsync(cancellationToken);
         await command.ExecuteNonQueryAsync(cancellationToken);
 
+        await EnsureActorStatusAsync(connection, cancellationToken);
         await EnsureColumnAsync(connection, "ParentAtUriHash", cancellationToken);
         await EnsureColumnAsync(connection, "ParentAtUri", cancellationToken);
         await EnsureColumnAsync(connection, "ParentUriBackfillStatus", cancellationToken);
@@ -55,6 +56,21 @@ public static class MonitorSchema
         await EnsureColumnAsync(connection, "ParentUriBackfillNextAttemptAt", cancellationToken);
         await EnsureIndexAsync(connection, "IX_Hits_ParentAtUriHash", cancellationToken);
         await EnsureIndexAsync(connection, "IX_Hits_ParentUriBackfill", cancellationToken);
+    }
+
+    private static async Task EnsureActorStatusAsync(MySqlConnection connection, CancellationToken cancellationToken)
+    {
+        await using MySqlCommand command = connection.CreateCommand();
+        command.CommandText = """
+            SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS
+            WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'Actor' AND COLUMN_NAME = 'AccountStatus'
+            """;
+        if (Convert.ToInt64(await command.ExecuteScalarAsync(cancellationToken)) == 0)
+        {
+            // Shared schema initialization holds the database schema lock across this migration.
+            command.CommandText = "ALTER TABLE Actor ADD COLUMN AccountStatus VARCHAR(32) CHARACTER SET ascii COLLATE ascii_bin NULL";
+            await command.ExecuteNonQueryAsync(cancellationToken);
+        }
     }
 
     private static async Task EnsureColumnAsync(MySqlConnection connection, string name,

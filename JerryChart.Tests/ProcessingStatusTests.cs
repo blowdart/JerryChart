@@ -83,16 +83,16 @@ public sealed class ProcessingStatusTests
         }, logger, "monitor", clock, shutdown.Token);
 
         clock.Advance(TimeSpan.FromSeconds(15));
-        await logger.Failed.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        await logger.Failed.Task.WaitAsync(TimeSpan.FromSeconds(5), TestContext.CancellationToken);
         Assert.AreEqual(1, calls);
         clock.Advance(TimeSpan.FromSeconds(15));
-        await entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        await entered.Task.WaitAsync(TimeSpan.FromSeconds(5), TestContext.CancellationToken);
         clock.Advance(TimeSpan.FromSeconds(60));
         Assert.AreEqual(2, calls, "An outstanding heartbeat must coalesce ticks, not start overlapping requests.");
         release.SetResult();
-        await third.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        await third.Task.WaitAsync(TimeSpan.FromSeconds(5), TestContext.CancellationToken);
         await shutdown.CancelAsync();
-        await loop.WaitAsync(TimeSpan.FromSeconds(5));
+        await loop.WaitAsync(TimeSpan.FromSeconds(5), TestContext.CancellationToken);
         Assert.AreEqual(1, maximumConcurrent);
         Assert.AreEqual(0, concurrent);
         clock.Advance(TimeSpan.FromMinutes(1));
@@ -112,7 +112,7 @@ public sealed class ProcessingStatusTests
             return Task.FromResult(false);
         }, NullLogger.Instance, "parent-uri-backfill", clock, CancellationToken.None);
         clock.Advance(TimeSpan.FromSeconds(15));
-        await loop.WaitAsync(TimeSpan.FromSeconds(5));
+        await loop.WaitAsync(TimeSpan.FromSeconds(5), TestContext.CancellationToken);
         clock.Advance(TimeSpan.FromMinutes(1));
         Assert.AreEqual(1, calls);
     }
@@ -131,6 +131,8 @@ public sealed class ProcessingStatusTests
             }
         }
     }
+
+    public TestContext TestContext { get; set; }
 }
 
 internal sealed class ProcessingTestClock : TimeProvider

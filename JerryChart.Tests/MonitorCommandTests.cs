@@ -3,12 +3,37 @@
 
 using JerryChart.Monitor;
 
+using idunno.AtProto;
+
 namespace JerryChart.Tests;
 
 /// <summary>Verifies monitor command routing and parsing without external services.</summary>
 [TestClass]
 public sealed class MonitorCommandTests
 {
+    /// <summary>Verifies exclusion validates the DID and does not start monitoring.</summary>
+    /// <param name="arguments">The exclusion arguments.</param>
+    /// <param name="valid">Whether the arguments identify a valid DID.</param>
+    /// <returns>A task representing the command invocation.</returns>
+    [TestMethod]
+    [DataRow("exclude-did did:plc:excluded", true)]
+    [DataRow("exclude-did", false)]
+    [DataRow("exclude-did not-a-did", false)]
+    [DataRow("exclude-did did:plc:excluded extra", false)]
+    public async Task ExclusionCommandValidatesDid(string arguments, bool valid)
+    {
+        Did? excluded = null;
+        var command = MonitorCommand.Create(_ => throw new AssertFailedException("Must not start ingestion."),
+            excludeDid: (did, _) =>
+            {
+                excluded = did;
+                return Task.FromResult(0);
+            });
+        int code = await command.Parse(arguments).InvokeAsync(cancellationToken: TestContext.CancellationToken);
+        Assert.AreEqual(valid ? 0 : 1, code);
+        Assert.AreEqual(valid ? new Did("did:plc:excluded") : null, excluded);
+    }
+
     /// <summary>Verifies default and explicit monitoring.</summary>
     /// <param name="arguments">The command-line arguments.</param>
     /// <param name="expectedCommand">The expected handler.</param>
@@ -32,7 +57,7 @@ public sealed class MonitorCommandTests
                 return Task.FromResult(2);
             });
 
-        var result = await command.Parse(arguments).InvokeAsync();
+        var result = await command.Parse(arguments).InvokeAsync(cancellationToken: TestContext.CancellationToken);
 
         Assert.AreEqual(expectedCommand, invoked);
         Assert.AreEqual(2, result);
@@ -55,7 +80,7 @@ public sealed class MonitorCommandTests
             return Task.FromResult(0);
         }
 
-        var result = await MonitorCommand.Create(Handler, Handler).Parse(arguments).InvokeAsync();
+        var result = await MonitorCommand.Create(Handler, Handler).Parse(arguments).InvokeAsync(cancellationToken: TestContext.CancellationToken);
 
         Assert.AreEqual(0, result);
         Assert.IsFalse(invoked);
@@ -83,9 +108,11 @@ public sealed class MonitorCommandTests
         var parsed = MonitorCommand.Create(Handler).Parse(arguments);
         Assert.IsNotEmpty(parsed.Errors);
 
-        var result = await parsed.InvokeAsync();
+        var result = await parsed.InvokeAsync(cancellationToken: TestContext.CancellationToken);
 
         Assert.AreEqual(1, result);
         Assert.IsFalse(invoked);
     }
+
+    public TestContext TestContext { get; set; }
 }

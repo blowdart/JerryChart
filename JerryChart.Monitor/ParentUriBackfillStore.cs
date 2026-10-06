@@ -80,8 +80,16 @@ internal sealed class ParentUriBackfillStore(MySqlConnection connection)
     {
         TimeSpan shortestDelay = TimeSpan.MaxValue;
         await using MySqlTransaction transaction = await connection.BeginTransactionAsync(cancellationToken);
+        await ActorExclusionStore.LockAsync(connection, transaction, cancellationToken);
         foreach (ParentUriBackfillRequest request in requests)
         {
+            if (await new ActorExclusionStore(connection).IsExcludedAsync(
+                request.AtUri.ToString(), request.ParentAuthorDid, transaction, cancellationToken))
+            {
+                // An exclusion can delete a row while its HTTP lookup is in flight. Do not restore it or
+                // mistake the intentional deletion for a database failure that retries the entire batch.
+                continue;
+            }
             int failureCount = request.AttemptCount == int.MaxValue
                 ? int.MaxValue
                 : request.AttemptCount + 1;
@@ -110,7 +118,7 @@ internal sealed class ParentUriBackfillStore(MySqlConnection connection)
 
         await transaction.CommitAsync(cancellationToken);
 
-        return shortestDelay;
+        return shortestDelay == TimeSpan.MaxValue ? minimumDelay : shortestDelay;
     }
 
     internal async Task SaveResultsAsync(
@@ -118,8 +126,14 @@ internal sealed class ParentUriBackfillStore(MySqlConnection connection)
         CancellationToken cancellationToken)
     {
         await using MySqlTransaction transaction = await connection.BeginTransactionAsync(cancellationToken);
+        await ActorExclusionStore.LockAsync(connection, transaction, cancellationToken);
         foreach (ParentUriBackfillResult result in results)
         {
+            if (await new ActorExclusionStore(connection).IsExcludedAsync(
+                result.Request.AtUri.ToString(), result.Request.ParentAuthorDid, transaction, cancellationToken))
+            {
+                continue;
+            }
             await using var command = connection.CreateCommand();
             command.Transaction = transaction;
             command.CommandText = result.ParentAtUri is null

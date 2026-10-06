@@ -1,0 +1,10 @@
+<Project Sdk="Microsoft.VisualStudio.JavaScript.Sdk/1.0.6887863">
+  <PropertyGroup>
+    <StartupCommand>npm run dev</StartupCommand>
+    <ShouldRunNpmInstall>false</ShouldRunNpmInstall>
+    <ShouldRunBuildScript>false</ShouldRunBuildScript>
+  </PropertyGroup>
+  <ItemGroup>
+    <None Remove=".next\**;node_modules\**;tooling\lint\node_modules\**;out\**;coverage\**;next-env.d.ts;tsconfig.tsbuildinfo;frontend-tests.xml" />
+  </ItemGroup>
+</Project>

@@ -1,6 +1,47 @@
 # JerryChart
 
-[![CI Build](https://github.com/blowdart/JerryChart/actions/workflows/ci-build.yml/badge.svg?branch=main)](https://github.com/blowdart/JerryChart/actions/workflows/ci-build.yml?query=branch%3Amain)
+### Privacy exclusions
+
+From the repository root, operators can permanently exclude an individual DID using the monitor CLI
+(configure `ConnectionStrings__jerrychart` for the intended database first):
+
+```powershell
+dotnet run --project JerryChart.Monitor -- exclude-did did:plc:example
+```
+
+Replace `did:plc:example` with the actual account DID, not its handle. Rebuild and
+restart the monitor with the exclusion-aware code before running this command.
+For a published deployment, run the equivalent command from the monitor's
+deployment directory:
+
+```powershell
+.\JerryChart.Monitor.exe exclude-did did:plc:example
+```
+
+This destructive command atomically deletes all stored replies authored by **or
+addressed to** that DID, removes its cached handle/status and refresh job, and
+stores the DID in a durable exclusion list to prevent re-ingestion. All reply
+counts, rankings, parent-post reports, and monthly statistics reflect the
+remaining records. There is no public exclusion endpoint or automatic unexclude
+command. Access is controlled by shell access and database credentials, not an
+application-level operator role. Keep those credentials server-side and restricted.
+Retaining the excluded DID is necessary to honor the request on future
+archive/live deliveries. Checkpoints are not reset, so other ingestion continues.
+The command can run alongside an **updated** monitor; restart older monitor
+instances before using it, as they do not enforce the block list. A successful
+log confirms committed deletion; failures/cancellation must not be treated as
+success. Refresh already-open pages to discard previously fetched reports.
+This removes records from the active database, not previously downloaded reports,
+old diagnostic logs, or any separately managed backups.
+
+The frontend serves a privacy policy at `/privacy`, linked from its shared footer.
+Short terms of use at `/terms` sit alongside it and cover accuracy, respectful
+use, availability, and contact.
+It describes public Bluesky metadata, historical retention, browser requests to
+Bluesky, operational logging, and the privacy contact. Keep it current when data
+collection, retention, hosting, or third-party integrations change.
+
+[![CI Build](https://github.com/blowdart/JerryChart/actions/workflows/ci-build.yml/badge.svg?branch=main)](https://github.com/blowdart/JerryChart/actions/workflows/ci-build.yml?query=branch%3Amain) [![CodeQL](https://github.com/blowdart/JerryChart/actions/workflows/codeql.yml/badge.svg?branch=main)](https://github.com/blowdart/JerryChart/actions/workflows/codeql.yml?query=branch%3Amain) [![Dependency Review](https://github.com/blowdart/JerryChart/actions/workflows/dependency-review.yml/badge.svg?event=pull_request)](https://github.com/blowdart/JerryChart/actions/workflows/dependency-review.yml?query=event%3Apull_request)
 
 **Jerry No** tracks Bluesky's collective failure to make Jerry Chen reconsider
 his choices. It records replies containing "Jerry no", distinguishes replies
@@ -19,7 +60,7 @@ far, not necessarily complete historical coverage.
 | `JerryChart.Monitor` | Replays Jetstream, records matching replies and durable progress in MySQL; Aspire resource `monitor` |
 | `JerryChart.Data` | Shared MySQL connection registration and parameterized queries |
 | `JerryChart.ServiceDefaults` | Aspire telemetry, discovery, and health checks |
-| `jerrychart-web` | Next.js App Router frontend with shadcn/ui components |
+| `JerryChart.Web` | Next.js App Router frontend with shadcn/ui components |
 | `JerryChart.Tests` | MSTest tests running on Microsoft.Testing.Platform |
 
 ## Minimum requirements
@@ -329,6 +370,116 @@ refusals are retried too. Authentication/configuration faults require operator
 correction, but do not make an already-running monitor give up. Ctrl+C or Aspire
 shutdown cancels replay, quota waits, and reconnect waits.
 
+### API metrics
+
+Select **api -> Metrics** in Aspire for the `JerryChart.Api` meter, alongside
+the existing HTTP and runtime metrics.
+
+| Instrument | Kind | Meaning |
+| --- | --- | --- |
+| `jerrychart.api.statistics.query.duration.seconds` | Histogram | Report query time, including connection acquisition and result materialization, but excluding JSON serialization; tagged by bounded `report` |
+| `jerrychart.api.statistics.query.errors` | Counter | Query failures tagged by `report` and bounded `error.type`; normal request/shutdown cancellation is excluded |
+| `jerrychart.api.statistics.result.items` | Histogram | Actual list report size, including empty lists; recorded only for successful list queries |
+| `jerrychart.api.statistics.data.age.seconds` | Gauge | Age of the monitor's last durable checkpoint, sampled immediately on API host startup and every 30 seconds |
+
+Duration includes failed and canceled attempts. The freshness sampler uses a
+small timestamp-only MySQL query, also measured under `report=CheckpointFreshness`;
+it does not scan Hits or perform database work in a metric collection callback.
+Missing checkpoints emit no age, not a misleading zero. Failed samples log a
+warning and retry on the next interval without recording an age. Dashboards may
+retain their last displayed value; check its measurement time if sampling fails.
+Future checkpoint timestamps caused by clock skew are clamped to zero age.
+Checkpoint age is not time since the last matching reply, nor a worker heartbeat;
+it can rise during archive downloads or waits even while the monitor is alive.
+
+These instruments use the same source generator and bounded typed tags as the
+monitor. The gauge attribute is currently experimental in telemetry abstractions
+10.10.0, so only that declaration has a scoped `EXTEXP0003` suppression.
+No SQL text, identifiers, or exception messages are included in tags.
+
+### Monitor metrics
+
+The monitor's AppView clients use `idunno.Security.Ssrf`'s
+`SsrfSocketsHttpHandlerFactory`. Jetstream uses its SDK-owned client, which
+already uses the same SSRF handler. The SDK uses the same
+protected HTTP client for archive requests and as the live WebSocket handshake
+invoker. Default unsafe-address checks remain enabled, automatic redirects are
+disabled. AppView connections have a 10-second connect timeout; Jetstream
+retains SDK timeout defaults. No loopback,
+private-network, or proxy bypass is configured. AppView's existing 30-second
+request timeout and 4 MiB response limit are preserved; SDK client defaults
+are retained by the SDK-owned client.
+This protection applies to external monitor traffic, not MySQL, Aspire health
+probes, or telemetry export. Intentionally configuring a local/private Jetstream
+endpoint will be rejected rather than weakening the block list.
+
+The installed SDK permits cross-origin archive HTTP 307/308 redirects only when
+it owns the client. Supplying an external `IHttpClientFactory` rejects the archive's
+HTTPS CDN redirect with "The archive returned an invalid download redirect."
+Keep the SDK-owned client so it manually validates redirects and applies SSRF
+checks to the destination, without enabling automatic redirects or allowing
+unsafe addresses. The temporary redirect diagnostic handler was removed with
+the external factory; the owned client has no handler-injection hook. Signed
+download URLs must not be logged.
+
+Both the normal monitor and manual backfill host subscribe to the
+`idunno.Security.Ssrf` meter via `AddSsrfHandlerMetrics()`. In Aspire's monitor
+Metrics view, look for `idunno.security.ssrf.blocked.requests.total`,
+`idunno.security.ssrf.unsafe.uri.total`, and
+`idunno.security.ssrf.unsafe.ip_address.total`. These counters record blocked
+requests and unsafe destinations; series appear when the corresponding detection
+occurs, not merely when a safe request succeeds.
+
+The monitor exports the `JerryChart.Monitor` meter through the existing
+OpenTelemetry pipeline to Aspire. Instruments are generated at compile time
+with `Microsoft.Extensions.Telemetry.Abstractions`, using strongly typed tag
+structs and bounded enum values, not hand-built tag dictionaries. In the Aspire
+dashboard, select the **monitor** resource's Metrics view and the `jerrychart.*`
+instruments. Measurements appear after the corresponding activity occurs.
+
+| Instrument | Kind | Tags / meaning |
+| --- | --- | --- |
+| `jerrychart.jetstream.events.processed` | Counter | `source` (Archive/Live), `event.kind` (Commit/Identity/etc.); successfully handled event deliveries |
+| `jerrychart.jetstream.processing.duration.seconds` | Histogram | Same event tags; handler time, including live cursor persistence, excluding download/quota waits |
+| `jerrychart.monitor.errors` | Counter | `operation`, `error.type`; retry failures, archive record/block skips, malformed replies, and terminal backfill failures |
+| `jerrychart.monitor.retries` | Counter | Same error tags; retries scheduled for Jetstream, backfill database/requests, and actor refresh |
+| `jerrychart.monitor.retry.delay.seconds` | Histogram | Same error tags; selected backoff/server delay, not actual sleep duration |
+| `jerrychart.backfill.invocations` | Counter | `trigger` (Scheduled/Manual), `outcome` (Started/Completed/Skipped/Canceled/Failed) |
+| `jerrychart.backfill.duration.seconds` | Histogram | Trigger and terminal outcome; complete invocation time, including retry/cooldown waits |
+| `jerrychart.backfill.posts` | Counter | `trigger`, `result` (Resolved/Unavailable); results counted after their database transaction commits |
+
+Counters are process-lifetime totals exported repeatedly as time series, not
+durable database totals. Use the dashboard's time-series view to observe changes
+over time; in a rate-capable metrics backend, calculate throughput from counter
+deltas per second, accounting for process resets. There is no separately
+sampled rate gauge or timer that could race with event counting.
+
+Event deliveries include replayed duplicates, nonmatching posts, deletes, and
+malformed records that the application intentionally handles by logging and
+skipping. They do **not** mean unique posts, matching hits, or remaining archive
+work. Failed handling is not counted, and live cursor duplicates rejected before
+handling are excluded. Archive event handling and checkpoint persistence remain
+separate; a later checkpoint failure can cause already-counted deliveries to
+be processed again.
+
+Filter backfill invocations to `outcome=Started` to count runs; each started run
+also records one terminal outcome, so summing all outcomes doubles the run
+count. A scheduled lock conflict is Skipped, not Completed. Pre-canceled
+invocations and suppressed in-process overlaps do not start runs.
+Error categories distinguish known Jetstream errors such as CursorTooOld,
+UnknownZstdDictionary, and InvalidRequest; unrecognized server error names
+remain Jetstream. Normal shutdown cancellation is not an error.
+Metrics count observations at instrumented error boundaries, not globally
+unique exception objects. Warning/error logs retain diagnostic detail;
+per-event archive/live debug logs are removed. Tags never include DID, AT URI,
+sequence, exception message, URL, or credentials.
+
+Durations and delays are explicitly seconds-valued, with appropriate histogram
+buckets. Instrument names include `.seconds` because the generator's Unit
+property is currently experimental; no experimental API suppression is needed.
+The manual backfill command registers the same meter and exports through OTLP
+when the usual exporter environment variables are supplied.
+
 ### Approximate archive time remaining
 
 The processing status shows approximate time remaining for the **pinned archive
@@ -434,16 +585,29 @@ monitor's five-minute reconnect cap.
 The updater initializes the shared schema before reading its queue, independently
 of API or replay startup order. The MySQL queue survives restarts, coalesces repeated notifications by DID, and
 is protected by a dedicated updater lock. Successful lookups are refreshed daily.
-Missing profiles and `handle.invalid` remain null, are logged, and are retried
-after 15 minutes; transport and API failures retry indefinitely with backoff.
+For missing profiles and `handle.invalid`, the updater queries
+`com.atproto.sync.getRepoStatus` on `https://bsky.network`, through the protected
+client, with separate five-second pacing and server-directed cooldowns. The
+result describes this relay's hosting/moderation state, not necessarily the PDS
+or AppView's policy. Confirmed deleted, suspended, deactivated, taken-down, and
+otherwise inactive accounts are rechecked daily, not put into the 15-minute
+missing-handle retry cycle. Desynchronized and throttled repositories are
+rechecked after 15 minutes. Active-but-unresolved accounts, `RepoNotFound`, and
+unknown profiles also retry after 15 minutes; absence is never inferred as deletion.
+Transport and API failures retain logged backoff.
+Statuses are stored separately from nullable real handles and exposed in author
+reports. Unresolved authors display Deleted, Suspended, Deactivated, Taken down,
+Desynchronized, Throttled, Inactive, or Unresolved as appropriate, without an
+`@` prefix, profile link, or hover lookup; the DID remains visible. Successfully
+resolved handles take precedence over status placeholders.
 Reports must support a temporarily unknown handle and always retain the DID.
 Handles are AppView-provided, not independently verified against DID documents.
 The monitor keeps SDK `AtUri`, `Did`, and `Handle` types internally, converting
 to strings only at SQL and HTTP boundaries. Profile lookup retains its custom
 HTTP, pacing, and JSON-validation implementation.
 
-Live identity events invalidate only actors already tracked, clear obsolete
-handles, and schedule a refresh without performing HTTP calls in the stream.
+Live identity and account events invalidate only actors already tracked, clear
+obsolete handles and cached statuses, and schedule a refresh without performing HTTP calls in the stream.
 Revision checks prevent an in-flight lookup from overwriting a later invalidation.
 Identity events are best-effort signals, not trusted handle values. Archive
 requests remain commits-only so existing archive checkpoints stay compatible;
@@ -777,6 +941,36 @@ a passing result. The original CI checks remain the required merge gates.
 Both workflows pin action versions to immutable commits. The reporting workflow
 must be merged into the default branch before its `workflow_run` trigger is active.
 
+The **GitHub Actions security scan** workflow runs zizmor on pushes to `main`
+and pull requests targeting `main`. It scans repository workflows and local
+actions and uploads SARIF findings to GitHub's Security tab. In this mode,
+findings do not fail the scan job; use code-scanning merge protection to gate
+findings. The action is SHA-pinned and the scanner version is fixed for
+reproducible scans.
+
+The **CodeQL** workflow analyzes C# and JavaScript/TypeScript on pushes to `main`,
+pull requests targeting `main`, and weekly. Its independent language jobs
+upload results to code scanning. C# analysis uses an explicit .NET 10 Release
+build; JavaScript/TypeScript analysis requires no build. These scans use the
+public repository's free code-scanning support; changing visibility to private
+may require a Code Security entitlement. Neither workflow changes merge
+protection rules automatically.
+
+The **Dependency Review** workflow reviews dependency changes in PRs targeting
+`main`, using SHA-pinned `actions/dependency-review-action`. Its license allowlist
+in `.github/dependency-review-config.yml` reflects SPDX identifiers in the
+existing dependency graph, including LGPL (sharp/libvips), MPL, and JSON.
+This is an admission policy, not a legal compatibility assessment.
+The nonstandard `LicenseRef-scancode-sonar-sal-1.0` license is handled by an
+exception for `SonarAnalyzer.CSharp` 10.35.0.4138, not by globally allowing unknown
+licenses. The same version-specific treatment applies to
+`Microsoft.Testing.Extensions.CodeCoverage` 18.11.0's Microsoft .NET Library
+license. Review and update these exceptions deliberately when those packages
+change. License exceptions do not exempt packages from vulnerability checks.
+Undetected licenses are reported as warnings according to the action's policy.
+Vulnerability checking retains the action's default low-severity/runtime-scope
+threshold, and the workflow does not change required merge checks.
+
 NuGet Central Package Management is enabled in `Directory.Packages.props`.
 All explicit package versions belong there; project `PackageReference` items
 have no versions. SDK versions for Aspire and MSTest are managed separately
@@ -791,7 +985,7 @@ nuget.org. The monitor's pinned pre-release versions are in
 `idunno.AtProto` package, not a separate package.
 
 `.github/dependabot.yml` checks NuGet dependencies at the solution root, npm
-dependencies in `jerrychart-web`, and GitHub Actions daily, with a seven-day
+dependencies in `JerryChart.Web`, and GitHub Actions daily, with a seven-day
 cooldown for version updates. Regular update PRs are enabled, not just security
 updates. The public MyGet registry is configured explicitly for the idunno
 prereleases. Groups retain the upstream test/JWT and CodeQL patterns and add
@@ -827,7 +1021,7 @@ requires only Docker.
 Frontend checks:
 
 ```powershell
-Set-Location jerrychart-web
+Set-Location JerryChart.Web
 npm ci
 node --test tests\top-reply-posts.test.cjs
 npm run lint

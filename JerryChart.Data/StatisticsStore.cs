@@ -173,7 +173,7 @@ public sealed class StatisticsStore(MySqlDataSource dataSource, TimeProvider tim
         await using var connection = await dataSource.OpenConnectionAsync(cancellationToken);
         await using var command = connection.CreateCommand();
         command.CommandText = """
-            SELECT ranked.AuthorDid, actor.Handle, ranked.ReplyCount
+            SELECT ranked.AuthorDid, actor.Handle, ranked.ReplyCount, actor.AccountStatus
             FROM (
                 SELECT AuthorDid, COUNT(*) AS ReplyCount
                 FROM Hits
@@ -192,7 +192,8 @@ public sealed class StatisticsStore(MySqlDataSource dataSource, TimeProvider tim
         while (await reader.ReadAsync(cancellationToken))
         {
             authors.Add(new TopReplyAuthor(reader.GetString(0),
-                reader.IsDBNull(1) ? null : reader.GetString(1), reader.GetInt64(2)));
+                reader.IsDBNull(1) ? null : reader.GetString(1), reader.GetInt64(2),
+                reader.IsDBNull(3) ? null : reader.GetString(3)));
         }
 
         return authors;

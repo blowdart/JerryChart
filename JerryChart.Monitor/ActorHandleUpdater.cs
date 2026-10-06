@@ -19,11 +19,7 @@ internal sealed class ActorHandleUpdater(MySqlDataSource dataSource, ILogger<Act
     /// <inheritdoc />
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
-        using var httpClient = new HttpClient(new HttpClientHandler { AllowAutoRedirect = false })
-        {
-            Timeout = TimeSpan.FromSeconds(30),
-            MaxResponseContentBufferSize = 4 * 1024 * 1024
-        };
+        using HttpClient httpClient = MonitorHttpClients.CreateAppViewClient();
 
         var client = new ActorProfileClient(httpClient);
         int failures = 0;
@@ -49,12 +45,19 @@ internal sealed class ActorHandleUpdater(MySqlDataSource dataSource, ILogger<Act
                     foreach (ActorRefreshRequest actor in actors)
                     {
                         Handle? handle = handles[actor.Did];
-                        if (handle is null)
+                        ActorResolution resolution = handle is not null
+                            ? new(handle, null)
+                            : await client.ResolveMissingAsync(actor.Did, stoppingToken);
+                        if (resolution.AccountStatus is not null)
+                        {
+                            MonitorLog.ActorInactive(logger, actor.Did, resolution.AccountStatus, resolution.RefreshSeconds);
+                        }
+                        else if (handle is null)
                         {
                             MonitorLog.MissingHandle(logger, actor.Did);
                         }
 
-                        await store.SaveAsync(actor, handle, stoppingToken);
+                        await store.SaveResolutionAsync(actor, resolution, stoppingToken);
                     }
 
                     failures = 0;
@@ -69,6 +72,7 @@ internal sealed class ActorHandleUpdater(MySqlDataSource dataSource, ILogger<Act
             {
                 failures = Math.Min(failures + 1, 7);
                 TimeSpan retryDelay = RetryLoop.Delay(failures);
+                MonitorMetrics.Retry(MetricOperation.ActorRefresh, exception, retryDelay);
                 MonitorLog.RetryingActorRefresh(logger, exception, retryDelay.TotalSeconds);
                 try
                 {

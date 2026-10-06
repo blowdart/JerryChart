@@ -4,6 +4,8 @@
 using System.CommandLine;
 using System.Text.Json;
 
+using idunno.AtProto;
+
 using JerryChart.Data;
 using JerryChart.Monitor;
 
@@ -16,8 +18,46 @@ using MySqlConnector;
 
 using OpenTelemetry.Metrics;
 
-RootCommand command = MonitorCommand.Create(ExecuteAsync, ExecuteParentUriBackfillAsync);
+RootCommand command = MonitorCommand.Create(ExecuteAsync, ExecuteParentUriBackfillAsync, ExecuteExclusionAsync);
 return await command.Parse(args).InvokeAsync();
+
+static async Task<int> ExecuteExclusionAsync(Did did, CancellationToken cancellationToken)
+{
+    using var configuration = new MonitorHostBuilder();
+    using IHost host = configuration.Builder.Build();
+    ILogger logger = host.Services.GetRequiredService<ILoggerFactory>().CreateLogger("JerryChart.Monitor");
+    string? connectionString = configuration.Builder.Configuration["ConnectionStrings:jerrychart"];
+    if (string.IsNullOrWhiteSpace(connectionString))
+    {
+        MonitorLog.MissingBackfillConnectionString(logger);
+        return 2;
+    }
+
+    try
+    {
+        await host.StartAsync(cancellationToken);
+        await using MySqlDataSource source = new MySqlDataSourceBuilder(connectionString).Build();
+        await using MySqlConnection connection = await source.OpenConnectionAsync(cancellationToken);
+        await MonitorSchema.InitializeAsync(connection, cancellationToken);
+        long deleted = await new ActorExclusionStore(connection).ExcludeAsync(did, cancellationToken);
+        MonitorLog.ActorExcluded(logger, did, deleted);
+        return 0;
+    }
+    catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+    {
+        MonitorLog.ExclusionCanceled(logger, did);
+        return 1;
+    }
+    catch (Exception exception) when (exception is MySqlException or InvalidOperationException or IOException)
+    {
+        MonitorLog.ExclusionFailed(logger, exception, did);
+        return 1;
+    }
+    finally
+    {
+        await host.StopAsync(CancellationToken.None);
+    }
+}
 
 static async Task<int> ExecuteAsync(CancellationToken cancellationToken)
 {
@@ -25,6 +65,8 @@ static async Task<int> ExecuteAsync(CancellationToken cancellationToken)
     WebApplicationBuilder builder = configuration.Builder;
     builder.Services.AddOpenTelemetry()
         .WithMetrics(metrics => metrics
+            .AddMonitorMetrics()
+            .AddSsrfHandlerMetrics()
             .AddAtProtoJetstreamMetrics()
             .AddAtProtoHttpClientMetrics()
             .AddAtProtoDirectoryMetrics());
@@ -52,13 +94,13 @@ static async Task<int> ExecuteAsync(CancellationToken cancellationToken)
     host.MapDefaultEndpoints();
     ILogger logger = host.Services.GetRequiredService<ILoggerFactory>().CreateLogger("JerryChart.Monitor");
     IHostApplicationLifetime lifetime = host.Services.GetRequiredService<IHostApplicationLifetime>();
-    using var cancellationRegistration = cancellationToken.Register(lifetime.StopApplication);
+    using CancellationTokenRegistration cancellationRegistration = cancellationToken.Register(lifetime.StopApplication);
     using var shutdown = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, lifetime.ApplicationStopping);
     CancellationToken stoppingToken = shutdown.Token;
 
     try
     {
-        await using (var connection = await host.Services.GetRequiredService<MySqlDataSource>()
+        await using (MySqlConnection connection = await host.Services.GetRequiredService<MySqlDataSource>()
             .OpenConnectionAsync(stoppingToken))
         {
             await MonitorSchema.InitializeAsync(connection, stoppingToken);
@@ -89,6 +131,10 @@ static async Task<int> ExecuteParentUriBackfillAsync(CancellationToken cancellat
 {
     using var configuration = new MonitorHostBuilder();
     HostApplicationBuilder builder = configuration.Builder;
+    builder.Services.AddOpenTelemetry()
+        .WithMetrics(metrics => metrics
+            .AddMonitorMetrics()
+            .AddSsrfHandlerMetrics());
     using IHost host = builder.Build();
     ILogger logger = host.Services.GetRequiredService<ILoggerFactory>().CreateLogger("JerryChart.Monitor");
     string? connectionString = builder.Configuration["ConnectionStrings:jerrychart"];
@@ -100,6 +146,7 @@ static async Task<int> ExecuteParentUriBackfillAsync(CancellationToken cancellat
 
     try
     {
+        await host.StartAsync(cancellationToken);
         await using MySqlDataSource dataSource = new MySqlDataSourceBuilder(connectionString).Build();
         var invocation = new ParentUriBackfillInvocation(dataSource,
             host.Services.GetRequiredService<ILogger<ParentUriBackfillInvocation>>(), TimeProvider.System);
@@ -116,5 +163,9 @@ static async Task<int> ExecuteParentUriBackfillAsync(CancellationToken cancellat
     {
         MonitorLog.ParentUriBackfillFailed(logger, exception);
         return 1;
+    }
+    finally
+    {
+        await host.StopAsync(CancellationToken.None);
     }
 }

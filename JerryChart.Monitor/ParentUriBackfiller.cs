@@ -20,12 +20,14 @@ internal sealed class ParentUriBackfiller(
         wait ?? ((duration, token) => Task.Delay(duration, token));
 
     private ProcessingActivity? _lastActivity;
+    internal bool Skipped { get; private set; }
 
     internal async Task RunAsync(CancellationToken cancellationToken)
     {
+        Skipped = false;
         try
         {
-            await BackfillDatabaseRetry.RunAsync(RunAttemptAsync, logger, cancellationToken, _delay);
+            await BackfillDatabaseRetry.RunAsync(RunAttemptAsync, logger, _delay, cancellationToken);
         }
         finally
         {
@@ -47,6 +49,7 @@ internal sealed class ParentUriBackfiller(
             if (!await store.TryInitializeAsync(cancellationToken))
             {
                 MonitorLog.ScheduledParentUriBackfillSkipped(logger);
+                Skipped = true;
                 return;
             }
         }
@@ -54,7 +57,7 @@ internal sealed class ParentUriBackfiller(
         {
             await store.InitializeAsync(cancellationToken);
         }
-        await using var activity = await ProcessingActivity.StartAsync(dataSource, logger, "parent-uri-backfill",
+        await using ProcessingActivity activity = await ProcessingActivity.StartAsync(dataSource, logger, "parent-uri-backfill",
             "backfill-running", ":parent-uri-backfill", connection, _clock, cancellationToken);
         _lastActivity = activity;
         await activity.ExecuteAsync(() => BackfillAsync(store, activity, persisted, cancellationToken),
@@ -100,6 +103,7 @@ internal sealed class ParentUriBackfiller(
             catch (Exception exception) when (ParentPostClient.IsTransient(exception))
             {
                 TimeSpan delay = await store.SaveRetryTimesAsync(batch, client.MinimumRetryDelay, cancellationToken);
+                MonitorMetrics.Retry(MetricOperation.BackfillRequest, exception, delay);
                 persisted();
                 MonitorLog.RetryingParentUriBackfill(logger, exception, batch.Count, delay.TotalSeconds);
                 await activity.ChangeAsync("retrying", cancellationToken);
@@ -111,6 +115,7 @@ internal sealed class ParentUriBackfiller(
             persisted();
             int resolved = results.Count(result => result.ParentAtUri is not null);
             int unavailable = results.Count - resolved;
+            MonitorMetrics.Posts(skipIfLocked ? BackfillTrigger.Scheduled : BackfillTrigger.Manual, resolved, unavailable);
             foreach (ParentUriBackfillResult result in results.Where(result => result.ParentAtUri is null))
             {
                 MonitorLog.ParentPostUnavailable(logger, result.Request.AtUri);

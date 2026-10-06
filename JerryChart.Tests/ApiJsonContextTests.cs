@@ -37,12 +37,14 @@ public sealed class ApiJsonContextTests
         IReadOnlyList<TopReplyAuthor> authors = [new("did:plc:example", null, 2)];
         IReadOnlyList<TopReplyPost> posts = [new("at://did:plc:example/app.bsky.feed.post/example", 2)];
         IReadOnlyList<MonthlyReplyCount> months = [new(new DateOnly(2026, 10, 1), 2)];
-        StringAssert.Contains(Serialize(authors), "\"handle\":null");
-        StringAssert.Contains(Serialize(posts), "\"replyCount\":2");
+        Assert.Contains("\"handle\":null", Serialize(authors));
+        IReadOnlyList<TopReplyAuthor> inactiveAuthors = [new("did:plc:example", null, 2, "deactivated")];
+        Assert.Contains("\"accountStatus\":\"deactivated\"", Serialize(inactiveAuthors));
+        Assert.Contains("\"replyCount\":2", Serialize(posts));
         Assert.AreEqual("""[{"month":"2026-10-01","replyCount":2}]""", Serialize(months));
-        StringAssert.Contains(Serialize(new ProblemDetails { Status = 500 }), "\"status\":500");
-        StringAssert.Contains(Serialize(new HttpValidationProblemDetails(
-            new Dictionary<string, string[]> { ["input"] = ["Invalid input."] })), "\"errors\":");
+        Assert.Contains("\"status\":500", Serialize(new ProblemDetails { Status = 500 }));
+        Assert.Contains("\"errors\":", Serialize(new HttpValidationProblemDetails(
+            new Dictionary<string, string[]> { ["input"] = ["Invalid input."] })));
     }
 
     private static string Serialize<T>(T value)

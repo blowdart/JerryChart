@@ -56,6 +56,7 @@ internal static class RetryLoop
 
                 failures = Math.Min(failures + 1, s_retrySeconds.Length);
                 TimeSpan delay = Delay(failures);
+                MonitorMetrics.Retry(MetricOperation.Jetstream, exception, delay);
                 MonitorLog.RetryingMonitor(logger, exception, delay.TotalSeconds);
                 try
                 {

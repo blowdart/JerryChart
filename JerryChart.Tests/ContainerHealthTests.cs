@@ -104,7 +104,7 @@ public sealed class ContainerHealthTests
         await using WebApplication app = builder.Build();
         app.MapDefaultEndpoints();
         var supervisor = app.Services.GetRequiredService<MonitorSupervisor>();
-        Assert.AreEqual(HealthStatus.Unhealthy, (await supervisor.CheckHealthAsync(new HealthCheckContext())).Status);
+        Assert.AreEqual(HealthStatus.Unhealthy, (await supervisor.CheckHealthAsync(new HealthCheckContext(), TestContext.CancellationToken)).Status);
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(15));
         await app.StartAsync(timeout.Token);
         await entered.Task.WaitAsync(timeout.Token);
@@ -123,7 +123,7 @@ public sealed class ContainerHealthTests
         app.Services.GetRequiredService<IHostApplicationLifetime>().StopApplication();
         Assert.AreEqual(0, await supervisor.Completion.WaitAsync(timeout.Token));
         Assert.IsTrue(exited.Task.IsCompleted);
-        Assert.AreEqual(HealthStatus.Unhealthy, (await supervisor.CheckHealthAsync(new HealthCheckContext())).Status);
+        Assert.AreEqual(HealthStatus.Unhealthy, (await supervisor.CheckHealthAsync(new HealthCheckContext(), TestContext.CancellationToken)).Status);
         await app.StopAsync(timeout.Token);
     }
 
@@ -139,8 +139,8 @@ public sealed class ContainerHealthTests
             host.Services.GetRequiredService<IHostApplicationLifetime>(),
             host.Services.GetRequiredService<ILogger<MonitorSupervisor>>());
         await supervisor.StartAsync(CancellationToken.None);
-        Assert.AreEqual(1, await supervisor.Completion.WaitAsync(TimeSpan.FromSeconds(5)));
-        Assert.AreEqual(HealthStatus.Unhealthy, (await supervisor.CheckHealthAsync(new HealthCheckContext())).Status);
+        Assert.AreEqual(1, await supervisor.Completion.WaitAsync(TimeSpan.FromSeconds(5), TestContext.CancellationToken));
+        Assert.AreEqual(HealthStatus.Unhealthy, (await supervisor.CheckHealthAsync(new HealthCheckContext(), TestContext.CancellationToken)).Status);
         Assert.IsTrue(host.Services.GetRequiredService<IHostApplicationLifetime>().ApplicationStopping.IsCancellationRequested);
         await supervisor.StopAsync(CancellationToken.None);
     }
@@ -157,8 +157,8 @@ public sealed class ContainerHealthTests
             host.Services.GetRequiredService<IHostApplicationLifetime>(),
             host.Services.GetRequiredService<ILogger<MonitorSupervisor>>());
         await supervisor.StartAsync(CancellationToken.None);
-        Assert.AreEqual(1, await supervisor.Completion.WaitAsync(TimeSpan.FromSeconds(5)));
-        Assert.AreEqual(HealthStatus.Unhealthy, (await supervisor.CheckHealthAsync(new HealthCheckContext())).Status);
+        Assert.AreEqual(1, await supervisor.Completion.WaitAsync(TimeSpan.FromSeconds(5), TestContext.CancellationToken));
+        Assert.AreEqual(HealthStatus.Unhealthy, (await supervisor.CheckHealthAsync(new HealthCheckContext(), TestContext.CancellationToken)).Status);
         await supervisor.StopAsync(CancellationToken.None);
     }
 
@@ -179,4 +179,6 @@ public sealed class ContainerHealthTests
                 HealthCheckResult.Unhealthy("private connection-string fixture", new IOException("secret fixture"),
                     new Dictionary<string, object> { ["private-data"] = "secret fixture" }));
     }
+
+    public TestContext TestContext { get; set; }
 }

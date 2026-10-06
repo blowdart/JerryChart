@@ -29,8 +29,7 @@ public sealed class MonitorHostBuilderTests
             Assert.AreEqual("wss://jetstream.us-west.bsky.network",
                 configuration.Builder.Configuration["Jetstream:Host"]);
             using IHost host = configuration.Builder.Build();
-            Assert.IsFalse(host.Services.GetServices<IHostedService>().Any(
-                service => service is ActorHandleUpdater),
+            Assert.DoesNotContain(service => service is ActorHandleUpdater, host.Services.GetServices<IHostedService>(),
                 "Backfill configuration must not register the actor updater.");
             Assert.IsNull(host.Services.GetService<ScheduledParentUriBackfill>(),
                 "The manual backfill command must not register or start the daily scheduler.");
@@ -61,7 +60,7 @@ public sealed class MonitorHostBuilderTests
             Environment.SetEnvironmentVariable(variable, null);
             using (var configuration = new MonitorHostBuilder(contentRootPath: root, baselineFiles: files))
             {
-                IConfiguration settings = configuration.Builder.Configuration;
+                ConfigurationManager settings = configuration.Builder.Configuration;
                 Assert.AreEqual("working-directory", settings["PolishTest:Value"]);
                 Assert.AreEqual("yes", settings["PolishTest:Retained"]);
                 Environment.SetEnvironmentVariable(variable, "environment");

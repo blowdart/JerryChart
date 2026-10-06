@@ -38,8 +38,8 @@ public sealed class ParentUriBackfillSchedulingTests
         using var host = builder.Build();
         Assert.AreSame(host.Services.GetRequiredService<ScheduledParentUriBackfill>(),
             host.Services.GetServices<IHostedService>().Single(service => service is ScheduledParentUriBackfill));
-        await host.StartAsync();
-        await host.StopAsync();
+        await host.StartAsync(TestContext.CancellationToken);
+        await host.StopAsync(TestContext.CancellationToken);
         Assert.AreEqual(0, logger.StoppedInvocations, "Startup must not run a backfill.");
         Assert.AreEqual(0, logger.Failures);
     }
@@ -113,7 +113,7 @@ public sealed class ParentUriBackfillSchedulingTests
         }
         finally
         {
-            await scheduled.StopAsync(CancellationToken.None).WaitAsync(TimeSpan.FromSeconds(5));
+            await scheduled.StopAsync(CancellationToken.None).WaitAsync(TimeSpan.FromSeconds(5), TestContext.CancellationToken);
         }
         Assert.AreEqual(0, logger.Failures);
     }
@@ -175,4 +175,6 @@ public sealed class ParentUriBackfillSchedulingTests
 
         public void Dispose() { }
     }
+
+    public TestContext TestContext { get; set; }
 }

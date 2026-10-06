@@ -36,7 +36,7 @@ internal sealed class ActorStore(MySqlConnection connection)
         command.CommandText = """
             UPDATE ActorRefresh r JOIN Actor a ON a.Did = r.Did
             SET a.UpdatedAt = IF(a.Handle IS NULL, a.UpdatedAt, UTC_TIMESTAMP(6)),
-                a.Handle = NULL, r.Revision = r.Revision + 1,
+                a.Handle = NULL, a.AccountStatus = NULL, r.Revision = r.Revision + 1,
                 r.NextAttemptAt = LEAST(r.NextAttemptAt, UTC_TIMESTAMP(6))
             WHERE r.Did = @did
             """;
@@ -45,7 +45,13 @@ internal sealed class ActorStore(MySqlConnection connection)
         await command.ExecuteNonQueryAsync(cancellationToken);
     }
 
-    internal async Task SaveAsync(ActorRefreshRequest request, Handle? handle, CancellationToken cancellationToken)
+    internal Task SaveAsync(ActorRefreshRequest request, Handle? handle, CancellationToken cancellationToken)
+    {
+        return SaveResolutionAsync(request, new(handle, null), cancellationToken);
+    }
+
+    internal async Task SaveResolutionAsync(ActorRefreshRequest request, ActorResolution resolution,
+        CancellationToken cancellationToken)
     {
         await using MySqlCommand command = connection.CreateCommand();
         // A notification received during HTTP resolution must win over the stale response.
@@ -53,13 +59,15 @@ internal sealed class ActorStore(MySqlConnection connection)
             UPDATE ActorRefresh r JOIN Actor a ON a.Did = r.Did
             SET a.UpdatedAt = UTC_TIMESTAMP(6),
                 a.Handle = @handle,
+                a.AccountStatus = @status,
                 r.NextAttemptAt = TIMESTAMPADD(SECOND, @seconds, UTC_TIMESTAMP(6))
             WHERE r.Did = @did AND r.Revision = @revision
             """;
         command.Parameters.AddWithValue("@did", request.Did.ToString());
         command.Parameters.AddWithValue("@revision", request.Revision);
-        command.Parameters.AddWithValue("@handle", handle?.ToString());
-        command.Parameters.AddWithValue("@seconds", handle is null ? 900 : 86400);
+        command.Parameters.AddWithValue("@handle", resolution.Handle?.ToString());
+        command.Parameters.AddWithValue("@status", resolution.AccountStatus);
+        command.Parameters.AddWithValue("@seconds", resolution.RefreshSeconds);
 
         await command.ExecuteNonQueryAsync(cancellationToken);
     }

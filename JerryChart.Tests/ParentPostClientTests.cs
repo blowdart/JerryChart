@@ -39,7 +39,7 @@ public sealed class ParentPostClientTests
         Assert.IsNull(results[1].ParentAtUri);
         Assert.IsNotNull(requested);
         Assert.AreEqual("public.api.bsky.app", requested.Host);
-        Assert.AreEqual(2, requested.Query.Split('&').Length);
+        Assert.HasCount(2, requested.Query.Split('&'));
         Assert.Contains("uris=at%3A%2F%2Fdid%3Aplc%3Areply", requested.Query);
     }
 

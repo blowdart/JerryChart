@@ -37,7 +37,7 @@ function modules(overrides = {}) {
   return load;
 }
 
-const { isProcessingStatus, activityMessage, activityOutcome, activitySummary } = modules()("lib\\processing-status.ts");
+const { isProcessingStatus, activityMessage, activityOutcome, activitySummary, replayThroughputMessage } = modules()("lib\\processing-status.ts");
 const observedAt = "2026-10-05T12:00:00+00:00";
 const worker = (phase = "not-started") => ({
   phase, state: phase, isRunning: ["archive", "live", "backfill-running", "retrying",
@@ -55,6 +55,106 @@ const status = (phase = "not-started", parentPhase = "not-started") => ({
 });
 const response = (body, code = 200) => new Response(JSON.stringify(body), { status: code });
 const settle = () => new Promise((resolve) => setImmediate(resolve));
+
+const throughput = () => ({
+  deliveredEvents: 240, windowSeconds: 120, windowStartedAt: "2026-10-05T11:58:00Z",
+  measuredAt: observedAt, eventsPerSecond: 2, microsecondsPerEvent: 500_000,
+});
+const throughputStatus = () => {
+  const value = status("archive");
+  value.monitor.activity.startedAt = value.monitor.activity.changedAt = throughput().windowStartedAt;
+  value.monitor.archiveThroughput = throughput();
+  return value;
+};
+
+test("optional measured throughput validates actual counts, elapsed windows and consistent derived rates", () => {
+  assert.ok(isProcessingStatus(status("archive")), "Older APIs can omit throughput.");
+  const value = throughputStatus();
+  assert.ok(isProcessingStatus(value));
+  assert.ok(isProcessingStatus({ ...value, monitor: { ...value.monitor, archiveThroughput: null } }));
+  for (const invalid of [
+    {}, { ...throughput(), deliveredEvents: 0 }, { ...throughput(), deliveredEvents: -1 },
+    { ...throughput(), deliveredEvents: 1.5 }, { ...throughput(), deliveredEvents: Number.MAX_SAFE_INTEGER + 1 },
+    { ...throughput(), windowSeconds: 119.999 }, { ...throughput(), windowSeconds: Infinity },
+    { ...throughput(), windowSeconds: NaN }, { ...throughput(), eventsPerSecond: 0 },
+    { ...throughput(), eventsPerSecond: 3 }, { ...throughput(), microsecondsPerEvent: 1 },
+    { ...throughput(), microsecondsPerEvent: Infinity }, { ...throughput(), measuredAt: "invalid" },
+    { ...throughput(), windowStartedAt: "2026-10-05T12:00:01Z" },
+  ]) assert.equal(isProcessingStatus({ ...value, monitor: { ...value.monitor, archiveThroughput: invalid } }), false);
+});
+
+test("throughput is a window average hidden at exact stale boundaries and in other attempts or phases", () => {
+  const value = throughputStatus();
+  const message = (monitor = value.monitor, elapsed = 0) => replayThroughputMessage(monitor, observedAt, elapsed);
+  assert.equal(message(), "Replay throughput (window average): 2 events/s (500,000 µs/event).");
+  assert.ok(message(value.monitor, 59_999));
+  assert.equal(message(value.monitor, 60_000), null);
+  assert.equal(message({ ...value.monitor, archiveThroughput: null }), null);
+  for (const phase of ["retrying", "live", "stopped", "failure"]) {
+    assert.equal(message({ ...value.monitor, activity: worker(phase) }), null);
+  }
+  for (const overrides of [
+    { state: "stale", isRunning: false }, { isRunning: false },
+    { startedAt: observedAt }, { changedAt: observedAt },
+    { heartbeatAt: "2026-10-05T11:59:00Z" },
+  ]) assert.equal(message({ ...value.monitor, activity: { ...value.monitor.activity, ...overrides } }), null);
+  assert.equal(message({ ...value.monitor, archiveThroughput: {
+    ...throughput(), measuredAt: "2026-10-05T12:00:01Z",
+  } }), null);
+  assert.equal(message({ ...value.monitor, archiveThroughput: {
+    ...throughput(), measuredAt: "2026-10-05T11:59:00Z",
+  } }), null);
+  assert.equal(message({ ...value.monitor, archiveReplay: { stalledSince: observedAt } }), null);
+});
+
+test("throughput appears only in Jetstream details, expires during failed polling, and preserves countdown", async (context) => {
+  context.mock.method(console, "error", () => {});
+  context.mock.method(global, "fetch", async () => response({}, 503));
+  const component = harness(context);
+  const initial = { status: throughputStatus(), error: null };
+  component.render(initial);
+  component.commit();
+  let html = component.render();
+  const [summary, details] = html.split("<dialog");
+  assert.doesNotMatch(summary, /Replay throughput/);
+  assert.match(details, /Jetstream processing[\s\S]*Replay throughput \(window average\): 2 events\/s \(500,000 µs\/event\)/);
+  assert.match(details, /not individual event latency/);
+  component.tick();
+  await settle();
+  assert.match(component.render(), /Replay throughput/);
+  component.advance(29_000);
+  assert.match(component.render(), /Replay throughput/);
+  assert.match(component.render(), /Next status refresh in 0:01/);
+  component.advance(1_000);
+  await settle();
+  html = component.render();
+  assert.doesNotMatch(html, /Replay throughput/);
+  assert.match(html, /Unable to refresh processing status/);
+  assert.match(html, /Next status refresh in 0:30/);
+  component.unmount();
+});
+
+test("throughput continues aging during an outstanding poll independently of the heartbeat", async (context) => {
+  let resolveRequest;
+  context.mock.method(global, "fetch", () => new Promise((resolve) => { resolveRequest = resolve; }));
+  const component = harness(context);
+  const value = throughputStatus();
+  value.monitor.archiveThroughput.measuredAt = "2026-10-05T11:59:31Z";
+  value.monitor.archiveThroughput.windowStartedAt = "2026-10-05T11:57:31Z";
+  value.monitor.activity.startedAt = value.monitor.activity.changedAt = value.monitor.archiveThroughput.windowStartedAt;
+  component.render({ status: value, error: null });
+  component.commit();
+  component.tick();
+  assert.match(component.render(), /Refreshing status\.\.\./);
+  assert.match(component.render(), /Replay throughput/);
+  component.advance(1_000);
+  const html = component.render();
+  assert.doesNotMatch(html, /Replay throughput/);
+  assert.match(html, /Historical replay in progress/, "Only the throughput is stale; the heartbeat is still fresh.");
+  component.unmount();
+  resolveRequest(response(status("live")));
+  await settle();
+});
 
 test("status validation accepts empty not-started, stale and terminal snapshots but not malformed success", () => {
   assert.ok(isProcessingStatus(status()));
@@ -257,15 +357,21 @@ function harness(context) {
   const states = [], effects = [], refs = [];
   let stateIndex = 0, effectIndex = 0, refIndex = 0, idIndex = 0, now = 0;
   let visible = "visible";
-  const timers = new Map(), listeners = new Set();
+  const timers = new Map(), intervals = new Map(), listeners = new Set();
   let timerId = 0;
   context.mock.method(performance, "now", () => now);
   context.mock.method(global, "setTimeout", (callback, duration) => {
     assert.equal(duration, 30_000, "Polling must retain the documented 30-second cadence.");
-    timers.set(++timerId, callback);
+    timers.set(++timerId, { callback, dueAt: now + duration });
     return timerId;
   });
   context.mock.method(global, "clearTimeout", (id) => timers.delete(id));
+  context.mock.method(global, "setInterval", (callback, duration) => {
+    assert.equal(duration, 1_000, "The refresh countdown must update once per second.");
+    intervals.set(++timerId, { callback, duration, dueAt: now + duration });
+    return timerId;
+  });
+  context.mock.method(global, "clearInterval", (id) => intervals.delete(id));
   const previousDocument = global.document;
   global.document = {
     get visibilityState() { return visible; },
@@ -309,20 +415,104 @@ function harness(context) {
       }
     },
     tick(duration = 30_000) {
-      now += duration;
       assert.equal(timers.size, 1, "Only one status poll may be scheduled.");
-      const [id, callback] = timers.entries().next().value;
-      timers.delete(id);
-      callback();
+      this.advance(duration);
+    },
+    advance(duration) {
+      const target = now + duration;
+      while (true) {
+        const nextTimeout = [...timers.entries()].sort((a, b) => a[1].dueAt - b[1].dueAt)[0];
+        const nextInterval = [...intervals.entries()].sort((a, b) => a[1].dueAt - b[1].dueAt)[0];
+        const timeoutDueAt = nextTimeout?.[1].dueAt ?? Infinity;
+        const intervalDueAt = nextInterval?.[1].dueAt ?? Infinity;
+        const dueAt = Math.min(timeoutDueAt, intervalDueAt);
+        if (dueAt > target) break;
+        now = dueAt;
+        if (timeoutDueAt <= intervalDueAt) {
+          timers.delete(nextTimeout[0]);
+          nextTimeout[1].callback();
+        } else {
+          nextInterval[1].dueAt += nextInterval[1].duration;
+          nextInterval[1].callback();
+        }
+      }
+      now = target;
     },
     visible(value) {
       visible = value ? "visible" : "hidden";
       for (const listener of listeners) listener();
     },
     timerCount() { return timers.size; },
-    unmount() { for (const effect of effects) effect.cleanup?.(); assert.equal(listeners.size, 0); },
+    intervalCount() { return intervals.size; },
+    unmount() {
+      for (const effect of effects) effect.cleanup?.();
+      assert.equal(listeners.size, 0);
+      assert.equal(timers.size, 0);
+      assert.equal(intervals.size, 0);
+    },
   };
 }
+
+test("refresh countdown decrements to the scheduled poll and resets after success and failure", async (context) => {
+  context.mock.method(console, "error", () => {});
+  const requests = [];
+  context.mock.method(global, "fetch", () => new Promise((resolve) => requests.push({ resolve })));
+  const component = harness(context);
+  component.render();
+  component.commit();
+  assert.match(component.render(), /Next status refresh in 0:30/);
+  component.advance(1_000);
+  assert.match(component.render(), /Next status refresh in 0:29/);
+  component.advance(29_000);
+  assert.equal(requests.length, 1);
+  assert.match(component.render(), /Refreshing status\.\.\./);
+
+  requests[0].resolve(response(status("live", "completed")));
+  await settle();
+  assert.match(component.render(), /Next status refresh in 0:30/);
+  component.advance(30_000);
+  assert.equal(requests.length, 2);
+  assert.match(component.render(), /Refreshing status\.\.\./);
+  requests[1].resolve(response({}, 503));
+  await settle();
+  const html = component.render();
+  assert.match(html, /Unable to refresh processing status/);
+  assert.match(html, /Next status refresh in 0:30/);
+  component.unmount();
+});
+
+test("refresh countdown pauses while hidden, resumes with an immediate serialized poll, and cleans up", async (context) => {
+  const requests = [];
+  context.mock.method(global, "fetch", (url, options) =>
+    new Promise((resolve) => requests.push({ signal: options.signal, resolve })));
+  const component = harness(context);
+  component.render();
+  component.commit();
+  component.advance(5_000);
+  assert.match(component.render(), /Next status refresh in 0:25/);
+
+  component.visible(false);
+  assert.equal(component.timerCount(), 0);
+  assert.equal(component.intervalCount(), 0);
+  assert.match(component.render(), /Status refresh paused while this page is hidden/);
+  component.visible(true);
+  assert.equal(requests.length, 1, "Returning to a visible tab immediately refreshes status.");
+  assert.match(component.render(), /Refreshing status\.\.\./);
+
+  component.visible(false);
+  assert.ok(requests[0].signal.aborted);
+  assert.match(component.render(), /Status refresh paused while this page is hidden/);
+  component.visible(true);
+  assert.equal(requests.length, 1, "An in-flight aborted request is serialized before resuming.");
+  requests[0].resolve(response(status("live", "completed")));
+  await settle();
+  assert.equal(requests.length, 2, "The pending visible refresh starts after the aborted request settles.");
+  requests[1].resolve(response(status("live", "completed")));
+  await settle();
+  assert.match(component.render(), /Next status refresh in 0:30/);
+  assert.equal(component.intervalCount(), 1);
+  component.unmount();
+});
 
 test("localized timestamps preserve the server fallback and use browser formatting after hydration", () => {
   const server = modules()("components\\localized-time.tsx");
@@ -365,7 +555,8 @@ test("handle refresh details follow parent backfill, precede refresh note, and n
   const summary = html.slice(0, html.indexOf("<dialog"));
   assert.doesNotMatch(summary, /Handle refresh|refreshes scheduled|rate limit/);
   assert.doesNotMatch(summary, /Heartbeat|heartbeat|♥|parent URIs/);
-  assert.match(details, /Parent-URI backfill[\s\S]*Handle refresh[\s\S]*Status refreshes every 30 seconds/);
+  assert.match(details, /Parent-URI backfill[\s\S]*Handle refresh[\s\S]*Next status refresh in 0:30/);
+  assert.match(details, /aria-live="off" class="pt-2 text-right text-xs"/);
   assert.doesNotMatch(details.slice(details.indexOf("Handle refresh")), /Activity finished:|Scheduled rows include/);
   assert.match(details, /Handle refresh<\/h3><p>Active \(request pacing \/ rate-limit wait\)\.<\/p>/);
   assert.doesNotMatch(details.slice(details.indexOf("Handle refresh")), /Outcome:/);
@@ -485,7 +676,7 @@ test("client keeps the main Jetstream summary concise and retains the approximat
   assert.match(details, /Activity finished: <time dateTime="2026-10-05T12:00:00\+00:00">/);
   assert.match(details, /Parent-URI backfill<\/h3><p>Completed\.<\/p><p>Activity started:/);
   assert.doesNotMatch(details.slice(details.indexOf("Parent-URI backfill"), details.indexOf("Handle refresh")), /Outcome:/);
-  assert.match(details, /Status refreshes every 30 seconds/);
+  assert.match(details, /Next status refresh in 0:30/);
   component.commit();
   component.unmount();
 });
@@ -540,6 +731,7 @@ test("initial errors remain explicit and a hidden page waits until visible to re
   component.commit();
   assert.equal(component.timerCount(), 0);
   assert.equal(calls, 0);
+  assert.match(component.render(), /Status refresh paused while this page is hidden/);
   component.visible(true);
   await settle();
   assert.equal(calls, 1);

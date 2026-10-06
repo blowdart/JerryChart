@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useId, useRef, useState } from "react";
-import { activityMessage, activityOutcome, activitySummary, isProcessingStatus, type ProcessingStatus as Status } from "@/lib/processing-status";
+import { activityMessage, activityOutcome, activitySummary, isProcessingStatus, replayThroughputMessage, type ProcessingStatus as Status } from "@/lib/processing-status";
 import { LocalizedTime } from "@/components/localized-time";
 
 interface InitialStatus {
@@ -9,10 +9,16 @@ interface InitialStatus {
   error: string | null;
 }
 
+type RefreshDisplay =
+  | { kind: "countdown"; seconds: number }
+  | { kind: "refreshing" }
+  | { kind: "paused" };
+
 export function ProcessingStatus({ initial }: { initial: InitialStatus }) {
   const [snapshot, setSnapshot] = useState(initial.status);
   const [error, setError] = useState(initial.error);
   const [elapsed, setElapsed] = useState(0);
+  const [refreshDisplay, setRefreshDisplay] = useState<RefreshDisplay>({ kind: "countdown", seconds: 30 });
   const receivedAt = useRef<number | null>(null);
   const detailsTitleId = useId();
   const detailsDialog = useRef<HTMLDialogElement>(null);
@@ -20,6 +26,8 @@ export function ProcessingStatus({ initial }: { initial: InitialStatus }) {
   useEffect(() => {
     let disposed = false;
     let timer: ReturnType<typeof setTimeout> | undefined;
+    let countdownTimer: ReturnType<typeof setInterval> | undefined;
+    let nextRefreshAt: number | null = null;
     let request: AbortController | undefined;
     let refreshRequested = false;
     if (initial.status || receivedAt.current === null) receivedAt.current = performance.now();
@@ -29,15 +37,38 @@ export function ProcessingStatus({ initial }: { initial: InitialStatus }) {
     setError(initial.error);
     setElapsed(performance.now() - receivedAt.current);
 
+    function clearSchedule() {
+      clearTimeout(timer);
+      clearInterval(countdownTimer);
+      timer = undefined;
+      countdownTimer = undefined;
+      nextRefreshAt = null;
+    }
+
     function schedule() {
       if (!disposed && document.visibilityState === "visible") {
+        clearSchedule();
+        nextRefreshAt = performance.now() + 30_000;
+        setRefreshDisplay({ kind: "countdown", seconds: 30 });
         timer = setTimeout(refresh, 30_000);
+        countdownTimer = setInterval(() => {
+          setElapsed(performance.now() - receivedAt.current!);
+          if (nextRefreshAt !== null) {
+            setRefreshDisplay({
+              kind: "countdown",
+              seconds: Math.max(0, Math.ceil((nextRefreshAt - performance.now()) / 1000)),
+            });
+          }
+        }, 1_000);
       }
     }
 
     async function refresh() {
       if (disposed || document.visibilityState !== "visible" || request) return;
+      clearSchedule();
+      setRefreshDisplay({ kind: "refreshing" });
       setElapsed(performance.now() - receivedAt.current!);
+      countdownTimer = setInterval(() => setElapsed(performance.now() - receivedAt.current!), 1_000);
       const controller = new AbortController();
       request = controller;
       try {
@@ -73,13 +104,15 @@ export function ProcessingStatus({ initial }: { initial: InitialStatus }) {
     }
 
     function visibilityChanged() {
-      clearTimeout(timer);
+      clearSchedule();
       if (document.visibilityState !== "visible") {
+        setRefreshDisplay({ kind: "paused" });
         request?.abort();
         return;
       }
       setElapsed(performance.now() - receivedAt.current!);
       if (request) {
+        setRefreshDisplay({ kind: "refreshing" });
         request.abort();
         refreshRequested = true;
         return;
@@ -88,11 +121,12 @@ export function ProcessingStatus({ initial }: { initial: InitialStatus }) {
     }
 
     document.addEventListener("visibilitychange", visibilityChanged);
-    if (initial.error) void refresh();
+    if (document.visibilityState !== "visible") setRefreshDisplay({ kind: "paused" });
+    else if (initial.error) void refresh();
     else schedule();
     return () => {
       disposed = true;
-      clearTimeout(timer);
+      clearSchedule();
       document.removeEventListener("visibilitychange", visibilityChanged);
       request?.abort();
     };
@@ -101,6 +135,7 @@ export function ProcessingStatus({ initial }: { initial: InitialStatus }) {
   const queue = snapshot?.parentUriBackfill;
   const handles = snapshot?.handleRefresh;
   const showParentUris = queue !== undefined && queue.pending + queue.retryPending > 0;
+  const throughput = snapshot ? replayThroughputMessage(snapshot.monitor, snapshot.observedAt, elapsed) : null;
   const format = (count: number) => count.toLocaleString("en-US");
   return (
     <>
@@ -147,6 +182,7 @@ export function ProcessingStatus({ initial }: { initial: InitialStatus }) {
                 {activityMessage(snapshot.monitor.activity, snapshot.observedAt, elapsed,
                   snapshot.monitor.archiveEstimate, snapshot.monitor.archiveReplay)}
               </p>
+              {throughput && <p title="Average since this replay attempt began, including download, decompression, parsing, processing, checkpoint and active waits; not individual event latency.">{throughput}</p>}
               {snapshot.monitor.archiveReplay && <>
                 <p>Last successful processing / durable progress:{" "}
                   <LocalizedTime timestamp={snapshot.monitor.archiveReplay.lastProgressAt} />.
@@ -217,8 +253,12 @@ export function ProcessingStatus({ initial }: { initial: InitialStatus }) {
               {handles.nextDueAt ? <LocalizedTime timestamp={handles.nextDueAt} /> : "none (empty queue)"}.
             </p>
           </> : <p>Handle refresh activity is unknown; no status snapshot is available.</p>}
-          <p className="text-xs">
-            Status refreshes every 30 seconds while this page is visible; statistics refresh separately.
+          <p aria-live="off" className="pt-2 text-right text-xs">
+            {refreshDisplay.kind === "refreshing"
+              ? "Refreshing status..."
+              : refreshDisplay.kind === "paused"
+                ? "Status refresh paused while this page is hidden."
+                : `Next status refresh in 0:${String(refreshDisplay.seconds).padStart(2, "0")}.`}
           </p>
         </div>
       </dialog>

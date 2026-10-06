@@ -43,9 +43,42 @@ public sealed record WorkerActivity(
 /// <param name="CheckpointUpdatedAt">The last durable checkpoint write in UTC; not a heartbeat.</param>
 /// <param name="ArchiveEstimate">Approximate snapshot time remaining, or null when no fresh estimate is available.</param>
 /// <param name="ArchiveReplay">Last recorded archive progress and generation-stall diagnostics, independent of heartbeat freshness.</param>
+/// <param name="ArchiveThroughput">Measured delivered-event window average for the current archive attempt, or null.</param>
 public sealed record MonitorProcessingStatus(
     WorkerActivity Activity, DateTimeOffset? CheckpointUpdatedAt, ArchiveReplayEstimate? ArchiveEstimate = null,
-    ArchiveReplayStatus? ArchiveReplay = null);
+    ArchiveReplayStatus? ArchiveReplay = null, ArchiveReplayThroughput? ArchiveThroughput = null);
+
+/// <summary>Reports an amortized delivery rate, not individual event processing latency.</summary>
+/// <param name="DeliveredEvents">The actual events yielded by archive enumeration, including redeliveries.</param>
+/// <param name="WindowSeconds">The monotonic elapsed seconds since this enumeration began, including waits.</param>
+/// <param name="WindowStartedAt">The UTC start of the current enumeration.</param>
+/// <param name="MeasuredAt">The UTC time the window was measured.</param>
+public sealed record ArchiveReplayThroughput(
+    long DeliveredEvents, double WindowSeconds, DateTimeOffset WindowStartedAt, DateTimeOffset MeasuredAt)
+{
+    /// <summary>Specifies the minimum observation window in seconds.</summary>
+    public const int MinimumWindowSeconds = 120;
+    /// <summary>Specifies the maximum persisted measurement age in seconds.</summary>
+    public const int MaximumAgeSeconds = 60;
+    /// <summary>Gets the average delivered events per second over the entire window.</summary>
+    public double EventsPerSecond => DeliveredEvents / WindowSeconds;
+    /// <summary>Gets the equivalent average microseconds per delivery, not an individual latency.</summary>
+    public double MicrosecondsPerEvent => WindowSeconds * 1_000_000 / DeliveredEvents;
+
+    /// <summary>Suppresses invalid, stale, retry, live, and previous-attempt measurements.</summary>
+    /// <param name="activity">The worker activity evaluated at the current time.</param>
+    /// <param name="now">The current UTC time.</param>
+    /// <returns>A fresh current-attempt measurement; otherwise, <see langword="null"/>.</returns>
+    public ArchiveReplayThroughput? Evaluate(WorkerActivity activity, DateTimeOffset now)
+    {
+        return DeliveredEvents > 0 && double.IsFinite(WindowSeconds) && WindowSeconds >= MinimumWindowSeconds &&
+            double.IsFinite(EventsPerSecond) && double.IsFinite(MicrosecondsPerEvent) &&
+            activity.Phase == "archive" && activity.State == "archive" && activity.IsRunning &&
+            WindowStartedAt <= MeasuredAt && MeasuredAt <= now &&
+            now - MeasuredAt < TimeSpan.FromSeconds(MaximumAgeSeconds) &&
+            activity.ChangedAt <= WindowStartedAt && activity.StartedAt <= WindowStartedAt ? this : null;
+    }
+}
 
 /// <summary>Reports archive progress and retry visibility without changing recovery or exposing SDK checkpoint details.</summary>
 /// <param name="NoProgressSince">The last successful processing/progress time, or the start of observation when none succeeded.</param>

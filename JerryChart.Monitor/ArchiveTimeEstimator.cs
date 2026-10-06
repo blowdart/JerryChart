@@ -5,14 +5,47 @@ using JerryChart.Data;
 
 namespace JerryChart.Monitor;
 
-/// <summary>Estimates snapshot duration from a bounded window of forward sequence progress.</summary>
+/// <summary>Estimates snapshot duration from sequence progress and independently measures actual archive delivery throughput.</summary>
 /// <param name="highWaterSequence">The highest previously persisted archive sequence.</param>
-/// <param name="clock">The clock for measurement times and stalled-window detection.</param>
+/// <param name="clock">The UTC clock for freshness and monotonic clock for delivery window durations.</param>
 internal sealed class ArchiveTimeEstimator(long highWaterSequence, TimeProvider clock)
 {
     private readonly Queue<(DateTimeOffset Time, long Sequence)> _samples = [];
     private DateTimeOffset? _lastAdvance;
     private ArchiveReplayEstimate? _estimate;
+    private readonly object _deliveryLock = new();
+    private readonly long _deliveryStarted = clock.GetTimestamp();
+    private readonly DateTimeOffset _deliveryStartedAt = clock.GetUtcNow();
+    private long? _lastDelivery;
+    private long _deliveredEvents;
+
+    /// <summary>Counts an actual archive delivery independently of sequence progress or matching hits.</summary>
+    internal void Delivered()
+    {
+        lock (_deliveryLock)
+        {
+            _deliveredEvents++;
+            _lastDelivery = clock.GetTimestamp();
+        }
+    }
+
+    /// <summary>Measures the current attempt including enumeration, processing, checkpoint, and waiting overhead.</summary>
+    /// <returns>A window average after two minutes and while deliveries are recent; otherwise, <see langword="null"/>.</returns>
+    internal ArchiveReplayThroughput? MeasureThroughput()
+    {
+        lock (_deliveryLock)
+        {
+            long timestamp = clock.GetTimestamp();
+            double seconds = clock.GetElapsedTime(_deliveryStarted, timestamp).TotalSeconds;
+            if (seconds < ArchiveReplayThroughput.MinimumWindowSeconds || _lastDelivery is not { } last ||
+                clock.GetElapsedTime(last, timestamp) >= TimeSpan.FromSeconds(ArchiveReplayEstimate.MaximumAgeSeconds))
+            {
+                return null;
+            }
+
+            return new(_deliveredEvents, seconds, _deliveryStartedAt, clock.GetUtcNow());
+        }
+    }
     /// <summary>Gets the highest processed sequence, including progress from earlier attempts.</summary>
     internal long HighWaterSequence { get; private set; } = highWaterSequence;
 

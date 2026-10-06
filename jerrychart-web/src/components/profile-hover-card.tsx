@@ -2,14 +2,16 @@
 
 import Image from "next/image";
 import { PreviewCard } from "@base-ui/react/preview-card";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { getBlueskyProfile, profileAvatarUrl, type BlueskyProfile } from "@/lib/bluesky-profile";
 import type { TopReplyAuthor } from "@/lib/reply-authors";
 import { ProfileText } from "@/components/profile-text";
 
-export function ProfileHoverCard({ author, clickable = false }: {
-  author: TopReplyAuthor;
+export function ProfileHoverCard({ author, clickable = false, children, className }: {
+  author: Pick<TopReplyAuthor, "did" | "handle">;
   clickable?: boolean;
+  children?: ReactNode;
+  className?: string;
 }) {
   const trigger = useRef<HTMLAnchorElement>(null);
   const [container, setContainer] = useState<HTMLElement | null>(null);
@@ -49,9 +51,9 @@ export function ProfileHoverCard({ author, clickable = false }: {
       <PreviewCard.Trigger
         ref={trigger}
         href={`https://bsky.app/profile/${author.did}`}
-        className={`${clickable ? "relative z-20 " : ""}underline underline-offset-4`}
+        className={`${clickable ? "relative z-20 " : ""}${className ?? "underline underline-offset-4"}`}
       >
-        {author.handle ? `@${author.handle}` : author.did}
+        {children ?? (author.handle ? `@${author.handle}` : author.did)}
       </PreviewCard.Trigger>
       <PreviewCard.Portal container={container}>
         <PreviewCard.Positioner positionMethod="fixed" collisionBoundary={[]} sideOffset={8} className="z-50 max-w-[var(--available-width)]">

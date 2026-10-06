@@ -52,6 +52,21 @@ const publicPost = (key, text) => ({ uri: uri(key), author: { did: rightJerryDid
 const response = (body, status = 200) => new Response(JSON.stringify(body), { status });
 const settle = () => new Promise((resolve) => setImmediate(resolve));
 
+test("profile hover triggers retain username defaults and support the introduction avatar", () => {
+  const { ProfileHoverCard } = modules()("components\\profile-hover-card.tsx");
+  const author = { did: rightJerryDid, handle: "jcsalterego.bsky.social" };
+  const username = renderToStaticMarkup(React.createElement(ProfileHoverCard, { author }));
+  assert.ok(username.includes("@jcsalterego.bsky.social"));
+  assert.ok(username.includes("underline underline-offset-4"));
+  const avatar = renderToStaticMarkup(React.createElement(ProfileHoverCard,
+    { author, className: "shrink-0" },
+    React.createElement("img", { src: "/avatar.png", alt: "Jerry Chen" })));
+  assert.ok(avatar.includes(`href="https://bsky.app/profile/${rightJerryDid}"`));
+  assert.ok(avatar.includes('alt="Jerry Chen"'));
+  assert.ok(avatar.includes("shrink-0"));
+  assert.ok(!avatar.includes("@jcsalterego.bsky.social"));
+});
+
 function replaceFetch(context, fetch) {
   const original = global.fetch;
   global.fetch = fetch;

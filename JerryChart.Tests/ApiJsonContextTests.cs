@@ -23,8 +23,11 @@ public sealed class ApiJsonContextTests
         var now = new DateTimeOffset(2026, 10, 5, 12, 0, 0, TimeSpan.Zero);
         var activity = new WorkerActivity("archive", "archive", true, now, now, now, null);
         var status = new ProcessingStatus(now,
-            new MonitorProcessingStatus(activity, now, new ArchiveReplayEstimate(120, now)),
-            new ParentUriProcessingStatus(activity, 1, 2, 3, 4, 5));
+            new MonitorProcessingStatus(activity, now, new ArchiveReplayEstimate(120, now),
+                new ArchiveReplayStatus(now.AddMinutes(-10), now.AddMinutes(-10), now.AddMinutes(-5), 7, now.AddMinutes(5))),
+            new ParentUriProcessingStatus(activity, 1, 2, 3, 4, 5),
+            new HandleRefreshProcessingStatus(activity with { Phase = "handle-refresh-waiting", State = "handle-refresh-waiting" },
+                9, 2, now.AddMinutes(-1)));
 
         Assert.AreEqual("""{"totalReplies":3,"rightJerryReplies":2,"wrongJerryReplies":1}""",
             Serialize(new ReplySummary(3, 2, 1)));
@@ -33,6 +36,17 @@ public sealed class ApiJsonContextTests
         Assert.AreEqual(120, document.RootElement.GetProperty("monitor")
             .GetProperty("archiveEstimate").GetProperty("remainingSeconds").GetDouble());
         Assert.AreEqual(1, document.RootElement.GetProperty("parentUriBackfill").GetProperty("pending").GetInt64());
+        JsonElement replay = document.RootElement.GetProperty("monitor").GetProperty("archiveReplay");
+        Assert.AreEqual(7, replay.GetProperty("consecutiveGenerationMismatches").GetInt32());
+        Assert.AreEqual(now.AddMinutes(-5), replay.GetProperty("stalledSince").GetDateTimeOffset());
+        Assert.AreEqual(now.AddMinutes(-10), replay.GetProperty("lastProgressAt").GetDateTimeOffset());
+        Assert.AreEqual(now.AddMinutes(5), replay.GetProperty("nextRetryAt").GetDateTimeOffset());
+        JsonElement handles = document.RootElement.GetProperty("handleRefresh");
+        Assert.AreEqual(9, handles.GetProperty("pending").GetInt64());
+        Assert.AreEqual(2, handles.GetProperty("due").GetInt64());
+        Assert.AreEqual(now.AddMinutes(-1), handles.GetProperty("nextDueAt").GetDateTimeOffset());
+        Assert.AreEqual("handle-refresh-waiting", handles.GetProperty("activity").GetProperty("phase").GetString());
+        Assert.AreEqual(JsonValueKind.Null, handles.GetProperty("activity").GetProperty("finishedAt").ValueKind);
 
         IReadOnlyList<TopReplyAuthor> authors = [new("did:plc:example", null, 2)];
         IReadOnlyList<TopReplyPost> posts = [new("at://did:plc:example/app.bsky.feed.post/example", 2)];

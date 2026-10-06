@@ -12,7 +12,7 @@ namespace JerryChart.Data;
 /// <param name="timeProvider">The UTC clock used for writes, retry eligibility, and freshness.</param>
 public sealed class ProcessingStatusStore(MySqlDataSource dataSource, TimeProvider timeProvider)
 {
-    /// <summary>Gets status for both workers and parent-URI counts across all monitoring hits.</summary>
+    /// <summary>Gets explicit worker status, parent-URI counts, and aggregate handle refresh eligibility.</summary>
     /// <param name="cancellationToken">A token to cancel the operation.</param>
     /// <returns>An uncached status snapshot. Missing runs are not-started, never inferred from queue rows.</returns>
     /// <exception cref="MySqlException">The database connection or query fails.</exception>
@@ -29,16 +29,20 @@ public sealed class ProcessingStatusStore(MySqlDataSource dataSource, TimeProvid
                 JSON_UNQUOTE(JSON_EXTRACT(CheckpointJson, '$.ArchiveEstimate.MeasuredAt')),
                 CAST(JSON_UNQUOTE(JSON_EXTRACT(CheckpointJson, '$.ArchiveEstimate.RemainingSeconds')) AS DOUBLE)
             FROM JetstreamReplayProgress WHERE MonitorId = 'jerry-no-v1';
+            SELECT NoProgressSince, LastProgressAt, StalledSince, ConsecutiveGenerationMismatches, NextRetryAt
+            FROM ArchiveReplayActivity WHERE Resource = 'monitor';
             SELECT COALESCE(SUM(ParentUriBackfillStatus = 0), 0),
                 COALESCE(SUM(ParentUriBackfillStatus = 3), 0),
                 COALESCE(SUM(ParentUriBackfillStatus = 3 AND ParentUriBackfillNextAttemptAt <= @now), 0),
                 COALESCE(SUM(ParentUriBackfillStatus = 1), 0),
                 COALESCE(SUM(ParentUriBackfillStatus = 2), 0) FROM Hits;
+            SELECT COUNT(*), COALESCE(SUM(NextAttemptAt <= @now), 0), MIN(NextAttemptAt) FROM ActorRefresh;
             """;
         command.Parameters.AddWithValue("@now", now.UtcDateTime);
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
         WorkerActivity monitor = NotStarted();
         WorkerActivity parent = NotStarted();
+        WorkerActivity handles = NotStarted();
         while (await reader.ReadAsync(cancellationToken))
         {
             var activity = new WorkerActivity(reader.GetString(1), reader.GetString(1), false,
@@ -50,6 +54,9 @@ public sealed class ProcessingStatusStore(MySqlDataSource dataSource, TimeProvid
                     break;
                 case "parent-uri-backfill":
                     parent = activity;
+                    break;
+                case "handle-refresh":
+                    handles = activity;
                     break;
             }
         }
@@ -67,13 +74,62 @@ public sealed class ProcessingStatusStore(MySqlDataSource dataSource, TimeProvid
             }
         }
         await reader.NextResultAsync(cancellationToken);
+        ArchiveReplayStatus? archiveReplay = await reader.ReadAsync(cancellationToken) ? ReadArchiveReplay(reader) : null;
+        await reader.NextResultAsync(cancellationToken);
+        await reader.ReadAsync(cancellationToken);
+        var parentQueue = new ParentUriProcessingStatus(parent,
+            reader.GetInt64(0), reader.GetInt64(1), reader.GetInt64(2), reader.GetInt64(3), reader.GetInt64(4));
+        await reader.NextResultAsync(cancellationToken);
         await reader.ReadAsync(cancellationToken);
 
         now = timeProvider.GetUtcNow();
         WorkerActivity evaluatedMonitor = monitor.Evaluate(now);
-        return new(now, new(evaluatedMonitor, checkpoint, estimate?.Evaluate(evaluatedMonitor, now)), new(parent.Evaluate(now),
-            reader.GetInt64(0), reader.GetInt64(1), reader.GetInt64(2), reader.GetInt64(3), reader.GetInt64(4)));
+        return new(now, new(evaluatedMonitor, checkpoint,
+            archiveReplay?.StalledSince is null ? estimate?.Evaluate(evaluatedMonitor, now) : null, archiveReplay),
+            parentQueue with { Activity = parent.Evaluate(now) },
+            new(handles.Evaluate(now), reader.GetInt64(0), reader.GetInt64(1), Utc(reader, 2)));
     }
+
+    internal async Task<ArchiveReplayStatus?> LoadArchiveReplayAsync(CancellationToken cancellationToken)
+    {
+        await using var connection = await dataSource.OpenConnectionAsync(cancellationToken);
+        await using var command = connection.CreateCommand();
+        command.CommandText = """
+            SELECT NoProgressSince, LastProgressAt, StalledSince, ConsecutiveGenerationMismatches, NextRetryAt
+            FROM ArchiveReplayActivity WHERE Resource = 'monitor'
+            """;
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+
+        return await reader.ReadAsync(cancellationToken) ? ReadArchiveReplay(reader) : null;
+    }
+
+    internal async Task ArchiveReplayAsync(string resource, string runId, ArchiveReplayStatus status,
+        CancellationToken cancellationToken)
+    {
+        await using var connection = await dataSource.OpenConnectionAsync(cancellationToken);
+        await using var command = connection.CreateCommand();
+        command.CommandTimeout = 5;
+        command.CommandText = """
+            INSERT INTO ArchiveReplayActivity
+                (Resource, NoProgressSince, LastProgressAt, StalledSince, ConsecutiveGenerationMismatches, NextRetryAt)
+            SELECT @resource, @since, @progress, @stalled, @mismatches, @retry
+            FROM ProcessingActivity
+            WHERE Resource = @resource AND RunId = @run AND FinishedAt IS NULL
+            ON DUPLICATE KEY UPDATE NoProgressSince = @since, LastProgressAt = @progress,
+                StalledSince = @stalled, ConsecutiveGenerationMismatches = @mismatches, NextRetryAt = @retry
+            """;
+        command.Parameters.AddWithValue("@resource", resource);
+        command.Parameters.AddWithValue("@run", runId);
+        command.Parameters.AddWithValue("@since", status.NoProgressSince.UtcDateTime);
+        command.Parameters.AddWithValue("@progress", status.LastProgressAt?.UtcDateTime);
+        command.Parameters.AddWithValue("@stalled", status.StalledSince?.UtcDateTime);
+        command.Parameters.AddWithValue("@mismatches", status.ConsecutiveGenerationMismatches);
+        command.Parameters.AddWithValue("@retry", status.NextRetryAt?.UtcDateTime);
+        await command.ExecuteNonQueryAsync(cancellationToken);
+    }
+
+    private static ArchiveReplayStatus ReadArchiveReplay(MySqlDataReader reader) =>
+        new(Utc(reader, 0)!.Value, Utc(reader, 1), Utc(reader, 2), reader.GetInt32(3), Utc(reader, 4));
 
     internal Task<bool> StartAsync(string resource, string runId, string phase, string lockName,
         int connectionId, CancellationToken cancellationToken) =>

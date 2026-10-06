@@ -112,6 +112,11 @@ public sealed partial class ApplicationTests
             Assert.IsNull(status.Monitor.CheckpointUpdatedAt);
             Assert.AreEqual(0L, status.ParentUriBackfill.Pending);
             Assert.AreEqual(0L, status.ParentUriBackfill.RetryPending);
+            Assert.AreEqual("not-started", status.HandleRefresh.Activity.State);
+            Assert.IsFalse(status.HandleRefresh.Activity.IsRunning);
+            Assert.AreEqual(0L, status.HandleRefresh.Pending);
+            Assert.AreEqual(0L, status.HandleRefresh.Due);
+            Assert.IsNull(status.HandleRefresh.NextDueAt);
             string json = await statusResponse.Content.ReadAsStringAsync(cancellationToken);
             Assert.DoesNotContain("runId", json);
             Assert.DoesNotContain("checkpointJson", json);
@@ -237,6 +242,17 @@ public sealed partial class ApplicationTests
                 (await statusStore.GetAsync(cancellationToken)).Monitor.ArchiveEstimate,
                 "Status must expose the checkpoint's fractional duration and UTC measurement without changing the cursor.");
             Assert.AreEqual(estimatedProgress, await store.LoadProgressAsync(cancellationToken));
+            var stalledArchive = new ArchiveReplayStatus(clock.GetUtcNow().AddMinutes(-10), null,
+                clock.GetUtcNow().AddMinutes(-5), 7, clock.GetUtcNow().AddMinutes(5));
+            await statusStore.ArchiveReplayAsync("monitor", firstRun, stalledArchive, cancellationToken);
+            ProcessingStatus stalled = await statusStore.GetAsync(cancellationToken);
+            Assert.AreEqual(stalledArchive, stalled.Monitor.ArchiveReplay);
+            Assert.AreEqual(stalledArchive, await statusStore.LoadArchiveReplayAsync(cancellationToken));
+            Assert.IsTrue(stalled.Monitor.Activity.IsRunning,
+                "A generation stall must not misrepresent a fresh worker heartbeat as stopped.");
+            Assert.IsNull(stalled.Monitor.ArchiveEstimate, "A stalled archive must not display a stale completion estimate.");
+            Assert.AreEqual(estimatedProgress, await store.LoadProgressAsync(cancellationToken),
+                "Stall reporting must preserve the entire SDK checkpoint and progress.");
             Assert.IsTrue(await statusStore.ChangeAsync("monitor", firstRun, "retrying", false, cancellationToken));
             Assert.IsNull((await statusStore.GetAsync(cancellationToken)).Monitor.ArchiveEstimate);
             Assert.IsTrue(await statusStore.ChangeAsync("monitor", firstRun, "live", false, cancellationToken));
@@ -341,6 +357,15 @@ public sealed partial class ApplicationTests
             Assert.IsFalse(await statusStore.HeartbeatAsync("monitor", firstRun, ":jerry-no-v1",
                 replacement.ServerThread, cancellationToken));
             Assert.AreEqual("live", (await statusStore.GetAsync(cancellationToken)).Monitor.Activity.State);
+            ArchiveReplayStatus? retained = await statusStore.LoadArchiveReplayAsync(cancellationToken);
+            Assert.IsNotNull(retained?.StalledSince, "Changing worker ownership is not archive recovery.");
+            var recoveredArchive = new ArchiveReplayStatus(clock.GetUtcNow(), clock.GetUtcNow(), null, 0, null);
+            await statusStore.ArchiveReplayAsync("monitor", firstRun, recoveredArchive, cancellationToken);
+            Assert.AreEqual(retained, await statusStore.LoadArchiveReplayAsync(cancellationToken),
+                "A replaced run must not clear a newer owner's stall diagnostic.");
+            await statusStore.ArchiveReplayAsync("monitor", secondRun, recoveredArchive, cancellationToken);
+            Assert.AreEqual(recoveredArchive, (await statusStore.GetAsync(cancellationToken)).Monitor.ArchiveReplay);
+            Assert.AreEqual(estimatedProgress, await new MonitorStore(replacement).LoadProgressAsync(cancellationToken));
         }
 
         Assert.IsFalse(await statusStore.HeartbeatAsync("monitor", secondRun, ":jerry-no-v1",

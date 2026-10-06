@@ -31,9 +31,11 @@ internal sealed class ScheduledParentUriBackfill(
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         MonitorLog.ParentUriBackfillScheduleRegistered(logger);
-        DateTimeOffset next = NextRun(clock.GetUtcNow());
         try
         {
+            await InvokeAsync(stoppingToken);
+            // Startup covers any daily slot reached while it runs; never immediately replay that slot afterward.
+            DateTimeOffset next = NextRun(clock.GetUtcNow());
             while (!stoppingToken.IsCancellationRequested)
             {
                 TimeSpan remaining = next - clock.GetUtcNow();

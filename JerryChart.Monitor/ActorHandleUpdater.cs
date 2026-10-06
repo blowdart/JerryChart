@@ -14,14 +14,26 @@ using MySqlConnector;
 
 namespace JerryChart.Monitor;
 
-internal sealed class ActorHandleUpdater(MySqlDataSource dataSource, ILogger<ActorHandleUpdater> logger) : BackgroundService
+internal sealed class ActorHandleUpdater(
+    MySqlDataSource dataSource, ILogger<ActorHandleUpdater> logger, TimeProvider? timeProvider = null) : BackgroundService
 {
     /// <inheritdoc />
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         using HttpClient httpClient = MonitorHttpClients.CreateAppViewClient();
 
-        var client = new ActorProfileClient(httpClient);
+        TimeProvider clock = timeProvider ?? TimeProvider.System;
+        ProcessingActivity? activity = null;
+        var client = new ActorProfileClient(httpClient, clock, async (delay, token) =>
+        {
+            await WaitForRequestAsync(delay, async (phase, cancellationToken) =>
+            {
+                if (activity is not null)
+                {
+                    await activity.ChangeBestEffortAsync(phase, cancellationToken);
+                }
+            }, (duration, cancellationToken) => Task.Delay(duration, cancellationToken), token);
+        });
         int failures = 0;
 
         while (!stoppingToken.IsCancellationRequested)
@@ -32,43 +44,84 @@ internal sealed class ActorHandleUpdater(MySqlDataSource dataSource, ILogger<Act
                 await using var connection = new MySqlConnection(options.ConnectionString);
                 await connection.OpenAsync(stoppingToken);
                 ActorStore store = await InitializeStoreAsync(connection, stoppingToken);
-                while (!stoppingToken.IsCancellationRequested)
+                try
                 {
-                    IReadOnlyList<ActorRefreshRequest> actors = await store.GetDueAsync(stoppingToken);
-                    if (actors.Count == 0)
+                    activity = await ProcessingActivity.StartAsync(dataSource, logger, "handle-refresh",
+                        "handle-refresh-running", ":actor-handles", connection, clock, stoppingToken);
+                }
+                catch (Exception exception) when (exception is MySqlException or OperationCanceledException or InvalidOperationException)
+                {
+                    // Visibility failures must not change actor resolution or its existing retry policy.
+                    MonitorLog.ProcessingStatusWriteFailed(logger, exception, "handle-refresh", "start");
+                }
+
+                async Task RefreshAsync()
+                {
+                    string? lastPhase = activity is null ? null : "handle-refresh-running";
+                    async Task ReportAsync(string phase)
                     {
-                        await Task.Delay(TimeSpan.FromSeconds(5), stoppingToken);
-                        continue;
+                        if (activity is not null && lastPhase != phase &&
+                            await activity.ChangeBestEffortAsync(phase, stoppingToken))
+                        {
+                            lastPhase = phase;
+                        }
                     }
 
-                    IReadOnlyDictionary<Did, Handle?> handles = await client.GetAsync(actors, stoppingToken);
-                    foreach (ActorRefreshRequest actor in actors)
+                    while (!stoppingToken.IsCancellationRequested)
                     {
-                        Handle? handle = handles[actor.Did];
-                        ActorResolution resolution = handle is not null
-                            ? new(handle, null)
-                            : await client.ResolveMissingAsync(actor.Did, stoppingToken);
-                        if (resolution.AccountStatus is not null)
+                        IReadOnlyList<ActorRefreshRequest> actors = await store.GetDueAsync(stoppingToken);
+                        if (actors.Count == 0)
                         {
-                            MonitorLog.ActorInactive(logger, actor.Did, resolution.AccountStatus, resolution.RefreshSeconds);
-                        }
-                        else if (handle is null)
-                        {
-                            MonitorLog.MissingHandle(logger, actor.Did);
+                            await ReportAsync("handle-refresh-idle");
+                            await Task.Delay(TimeSpan.FromSeconds(5), stoppingToken);
+                            continue;
                         }
 
-                        await store.SaveResolutionAsync(actor, resolution, stoppingToken);
+                        await ReportAsync("handle-refresh-running");
+                        IReadOnlyDictionary<Did, Handle?> handles = await client.GetAsync(actors, stoppingToken);
+                        foreach (ActorRefreshRequest actor in actors)
+                        {
+                            Handle? handle = handles[actor.Did];
+                            ActorResolution resolution = handle is not null
+                                ? new(handle, null)
+                                : await client.ResolveMissingAsync(actor.Did, stoppingToken);
+                            if (resolution.AccountStatus is not null)
+                            {
+                                MonitorLog.ActorInactive(logger, actor.Did, resolution.AccountStatus, resolution.RefreshSeconds);
+                            }
+                            else if (handle is null)
+                            {
+                                MonitorLog.MissingHandle(logger, actor.Did);
+                            }
+
+                            await store.SaveResolutionAsync(actor, resolution, stoppingToken);
+                        }
+
+                        failures = 0;
                     }
+                }
 
-                    failures = 0;
+                try
+                {
+                    if (activity is null)
+                    {
+                        await RefreshAsync();
+                    }
+                    else
+                    {
+                        await activity.ExecuteAsync(RefreshAsync, "stopped", stoppingToken, IsRetryable);
+                    }
+                }
+                finally
+                {
+                    activity = null;
                 }
             }
             catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
             {
                 break;
             }
-            catch (Exception exception) when (exception is MySqlException or HttpRequestException or IOException
-                or JsonException or InvalidOperationException or OperationCanceledException)
+            catch (Exception exception) when (IsRetryable(exception))
             {
                 failures = Math.Min(failures + 1, 7);
                 TimeSpan retryDelay = RetryLoop.Delay(failures);
@@ -85,6 +138,19 @@ internal sealed class ActorHandleUpdater(MySqlDataSource dataSource, ILogger<Act
             }
 
         }
+    }
+
+    private static bool IsRetryable(Exception exception) =>
+        exception is MySqlException or HttpRequestException or IOException or JsonException
+            or InvalidOperationException or OperationCanceledException;
+
+    internal static async Task WaitForRequestAsync(TimeSpan delay,
+        Func<string, CancellationToken, Task> report,
+        Func<TimeSpan, CancellationToken, Task> wait, CancellationToken cancellationToken)
+    {
+        await report("handle-refresh-waiting", cancellationToken);
+        await wait(delay, cancellationToken);
+        await report("handle-refresh-running", cancellationToken);
     }
 
     internal static async Task<ActorStore> InitializeStoreAsync(

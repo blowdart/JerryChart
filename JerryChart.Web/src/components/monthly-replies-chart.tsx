@@ -10,7 +10,12 @@ export function MonthlyRepliesChart({ months, expanded = false }: { months: Mont
 
   return (
     <figure aria-label="Monthly Jerry no replies to the right Jerry">
-      <div className={expanded ? "flex gap-4 overflow-x-auto pb-4" : "grid grid-cols-6 gap-2 sm:gap-4"}>
+      <div
+        role={expanded ? "region" : undefined}
+        aria-label={expanded ? "All-time monthly replies chart. Scroll horizontally to see more months." : undefined}
+        tabIndex={expanded ? 0 : undefined}
+        className={`${expanded ? "flex gap-4 overflow-x-auto pb-4 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-foreground" : "grid grid-cols-6 gap-2 sm:gap-4"}`}
+      >
         {months.map((month) => {
           const label = labelFormatter.format(new Date(`${month.month}T00:00:00Z`));
           const count = month.replyCount.toLocaleString("en-US");

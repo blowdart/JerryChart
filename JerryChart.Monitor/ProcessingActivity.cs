@@ -18,6 +18,8 @@ internal sealed class ProcessingActivity : IAsyncDisposable
     private readonly string _runId = Guid.NewGuid().ToString();
     private readonly CancellationTokenSource _heartbeatCancellation = new();
     private Task _heartbeat = Task.CompletedTask;
+    private ArchiveStallTracker? _archiveStall;
+    private readonly SemaphoreSlim _archiveReport = new(1, 1);
     private bool _disposed;
 
     private ProcessingActivity(ProcessingStatusStore store, ILogger logger, string resource,
@@ -31,7 +33,7 @@ internal sealed class ProcessingActivity : IAsyncDisposable
 
     internal static async Task<ProcessingActivity> StartAsync(MySqlDataSource dataSource, ILogger logger,
         string resource, string phase, string lockName, MySqlConnection owner,
-        TimeProvider clock, CancellationToken cancellationToken)
+        TimeProvider clock, CancellationToken cancellationToken, ArchiveStallTracker? archiveStall = null)
     {
         var activity = new ProcessingActivity(new ProcessingStatusStore(dataSource, clock),
             logger, resource, owner.ServerThread);
@@ -44,9 +46,23 @@ internal sealed class ProcessingActivity : IAsyncDisposable
             }
 
             MonitorLog.ProcessingPhaseChanged(logger, resource, phase);
+            activity._archiveStall = archiveStall;
+            if (archiveStall is not null)
+            {
+                MonitorMetrics.ObserveArchive(archiveStall, clock);
+            }
             activity._heartbeat = RunHeartbeatAsync(
-                token => activity._store.HeartbeatAsync(resource, activity._runId, lockName,
-                    activity._connectionId, token), logger, resource, clock, activity._heartbeatCancellation.Token);
+                async token =>
+                {
+                    bool owned = await activity._store.HeartbeatAsync(resource, activity._runId, lockName,
+                        activity._connectionId, token);
+                    if (owned)
+                    {
+                        await activity.ReportArchiveAsync(token);
+                    }
+
+                    return owned;
+                }, logger, resource, clock, activity._heartbeatCancellation.Token);
 
             return activity;
         }
@@ -54,6 +70,39 @@ internal sealed class ProcessingActivity : IAsyncDisposable
         {
             await activity.DisposeAsync();
             throw;
+        }
+    }
+
+    internal async Task ReportArchiveAsync(CancellationToken cancellationToken, bool attemptStarted = false)
+    {
+        if (_archiveStall is null)
+        {
+            return;
+        }
+
+        try
+        {
+            await _archiveReport.WaitAsync(cancellationToken);
+            try
+            {
+                if (!_archiveStall.IsInitialized)
+                {
+                    _archiveStall.Initialize(await _store.LoadArchiveReplayAsync(cancellationToken));
+                }
+                if (attemptStarted)
+                {
+                    _archiveStall.AttemptStarted();
+                }
+                await _store.ArchiveReplayAsync(_resource, _runId, _archiveStall.Snapshot(), cancellationToken);
+            }
+            finally
+            {
+                _archiveReport.Release();
+            }
+        }
+        catch (Exception exception) when (exception is MySqlException or OperationCanceledException or InvalidOperationException)
+        {
+            MonitorLog.ProcessingStatusWriteFailed(_logger, exception, _resource, "archive-diagnostics");
         }
     }
 
@@ -65,6 +114,20 @@ internal sealed class ProcessingActivity : IAsyncDisposable
         }
 
         MonitorLog.ProcessingPhaseChanged(_logger, _resource, phase);
+    }
+
+    internal async Task<bool> ChangeBestEffortAsync(string phase, CancellationToken cancellationToken)
+    {
+        try
+        {
+            await ChangeAsync(phase, cancellationToken);
+            return true;
+        }
+        catch (Exception exception) when (exception is MySqlException or OperationCanceledException or InvalidOperationException)
+        {
+            MonitorLog.ProcessingStatusWriteFailed(_logger, exception, _resource, phase);
+            return false;
+        }
     }
 
     internal async Task ExecuteAsync(Func<Task> work, string completedPhase, CancellationToken cancellationToken,
@@ -96,6 +159,11 @@ internal sealed class ProcessingActivity : IAsyncDisposable
 
     internal async Task FinishAsync(string phase)
     {
+        if (_archiveStall is not null)
+        {
+            using var diagnosticTimeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+            await ReportArchiveAsync(diagnosticTimeout.Token, attemptStarted: phase != "retrying");
+        }
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
         try
         {

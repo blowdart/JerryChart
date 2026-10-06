@@ -1,46 +1,5 @@
 # JerryChart
 
-### Privacy exclusions
-
-From the repository root, operators can permanently exclude an individual DID using the monitor CLI
-(configure `ConnectionStrings__jerrychart` for the intended database first):
-
-```powershell
-dotnet run --project JerryChart.Monitor -- exclude-did did:plc:example
-```
-
-Replace `did:plc:example` with the actual account DID, not its handle. Rebuild and
-restart the monitor with the exclusion-aware code before running this command.
-For a published deployment, run the equivalent command from the monitor's
-deployment directory:
-
-```powershell
-.\JerryChart.Monitor.exe exclude-did did:plc:example
-```
-
-This destructive command atomically deletes all stored replies authored by **or
-addressed to** that DID, removes its cached handle/status and refresh job, and
-stores the DID in a durable exclusion list to prevent re-ingestion. All reply
-counts, rankings, parent-post reports, and monthly statistics reflect the
-remaining records. There is no public exclusion endpoint or automatic unexclude
-command. Access is controlled by shell access and database credentials, not an
-application-level operator role. Keep those credentials server-side and restricted.
-Retaining the excluded DID is necessary to honor the request on future
-archive/live deliveries. Checkpoints are not reset, so other ingestion continues.
-The command can run alongside an **updated** monitor; restart older monitor
-instances before using it, as they do not enforce the block list. A successful
-log confirms committed deletion; failures/cancellation must not be treated as
-success. Refresh already-open pages to discard previously fetched reports.
-This removes records from the active database, not previously downloaded reports,
-old diagnostic logs, or any separately managed backups.
-
-The frontend serves a privacy policy at `/privacy`, linked from its shared footer.
-Short terms of use at `/terms` sit alongside it and cover accuracy, respectful
-use, availability, and contact.
-It describes public Bluesky metadata, historical retention, browser requests to
-Bluesky, operational logging, and the privacy contact. Keep it current when data
-collection, retention, hosting, or third-party integrations change.
-
 [![CI Build](https://github.com/blowdart/JerryChart/actions/workflows/ci-build.yml/badge.svg?branch=main)](https://github.com/blowdart/JerryChart/actions/workflows/ci-build.yml?query=branch%3Amain) [![CodeQL](https://github.com/blowdart/JerryChart/actions/workflows/codeql.yml/badge.svg?branch=main)](https://github.com/blowdart/JerryChart/actions/workflows/codeql.yml?query=branch%3Amain) [![Dependency Review](https://github.com/blowdart/JerryChart/actions/workflows/dependency-review.yml/badge.svg?event=pull_request)](https://github.com/blowdart/JerryChart/actions/workflows/dependency-review.yml?query=event%3Apull_request)
 
 **Jerry No** tracks Bluesky's collective failure to make Jerry Chen reconsider
@@ -200,8 +159,11 @@ configuration or database credentials in client code are needed.
 
 ### Processing activity
 
-The homepage shows **both** Jetstream historical replay/live monitoring and the
-parent-URI backfill (daily scheduled or manual), independently of chart refreshes. The uncached
+The homepage shows Jetstream historical replay/live monitoring, the
+parent-URI backfill (daily scheduled or manual), and the independent continuous
+handle updater in the processing **details** dialog, independently of chart refreshes. The compact
+Jetstream summary is unchanged; standalone heartbeat timestamps are shown only in details.
+The uncached
 `GET /statistics/processing-status` endpoint (and the browser's same-origin
 `/api/statistics/processing-status` proxy) reports recorded phases, UTC start,
 phase-change, heartbeat and finish times, the last checkpoint write time, and
@@ -210,6 +172,14 @@ an optional approximate archive duration based on recent forward progress
 It does not expose run ownership tokens, checkpoint JSON, credentials, or an
 invented historical completion percentage.
 
+The optional `monitor.archiveReplay` diagnostic reports `noProgressSince`,
+`lastProgressAt`, `stalledSince`, `consecutiveGenerationMismatches`, and
+`nextRetryAt`, independently of worker heartbeat and phase. The homepage explicitly
+shows **Archive stalled**, elapsed stall/no-progress durations, mismatch count,
+last successful processing/progress, and the next scheduled retry. A fresh
+heartbeat proves worker liveness, **not** archive advancement. Stale or stopped
+workers show the **last recorded** stall without asserting current liveness.
+
 Workers record activity only after owning their separate resource advisory
 locks. `ProcessingActivity` is initialized idempotently by the API or workers,
 with shared schema initialization serialized independently of resource locks.
@@ -217,15 +187,17 @@ Run IDs fence all subsequent writes so a previous process cannot stop or revive
 a newer owner's status. Checkpoints are **not** heartbeats.
 
 An independent, awaited task writes a heartbeat every **15 seconds**, even
-during archive quota/network waits, parent-URI rate-limit/retry waits, and idle
-live monitoring. Heartbeats use separate pooled connections, verify the resource
-lock is still owned, and never share the replay/backfill connection. Requests
+during archive quota/network waits, parent-URI rate-limit/retry waits, handle request
+pacing/rate-limit waits, and idle live monitoring or handle polling.
+Heartbeats use separate pooled connections, verify the resource
+lock is still owned, and never share the replay/backfill/updater connection. Requests
 are serial within the heartbeat loop and bounded to five seconds. Heartbeat
 errors are logged and do not advance the timestamp or discard cursor progress.
 A lost database connection requires a new lock acquisition; the old run stops
 heartbeating during reconnect waits.
 
-Active phases (`archive`, `live`, `backfill-running`, `retrying`) become
+Active phases (`archive`, `live`, `backfill-running`, `retrying`,
+`handle-refresh-idle`, `handle-refresh-running`, `handle-refresh-waiting`) become
 **stale**, not running, when the last successful heartbeat is **60 seconds**
 old. Stale means activity is unknown, not a confirmed crash. Graceful cancellation
 records `stopped`; normal backfill exhaustion records `completed`; unrecoverable
@@ -324,7 +296,8 @@ monitor's replay cursor lock:
 | `MonitorSchemaMigration` | Durable markers for one-time monitor data migrations |
 | `Hits` | `CreatedAt` (UTC), `AtUri`, `AuthorDid`, `ParentAuthorDid`, nullable `ParentAtUri` and its hash; indexed durable parent-URI backfill status |
 | `JetstreamReplayProgress` | Complete archive checkpoint or live sequence, service, fallback starting sequence, and update time |
-| `ProcessingActivity` | Separate monitor/backfill run ownership, recorded phase, UTC heartbeat and lifecycle timestamps |
+| `ProcessingActivity` | Separate monitor/backfill/handle-updater run ownership, recorded phase, UTC heartbeat and lifecycle timestamps |
+| `ArchiveReplayActivity` | Ownership-fenced archive progress, generation-stall timestamps, consecutive mismatch count, and scheduled retry time; never used to alter the replay checkpoint |
 | `StatisticsUpdate` | UTC ingestion time of the last new hit, committed atomically with that hit |
 
 `ParentAuthorDid` and the immediate parent's full AT URI come from
@@ -431,7 +404,7 @@ requests and unsafe destinations; series appear when the corresponding detection
 occurs, not merely when a safe request succeeds.
 
 The monitor exports the `JerryChart.Monitor` meter through the existing
-OpenTelemetry pipeline to Aspire. Instruments are generated at compile time
+OpenTelemetry pipeline to Aspire. Counters and histograms are generated at compile time
 with `Microsoft.Extensions.Telemetry.Abstractions`, using strongly typed tag
 structs and bounded enum values, not hand-built tag dictionaries. In the Aspire
 dashboard, select the **monitor** resource's Metrics view and the `jerrychart.*`
@@ -447,6 +420,11 @@ instruments. Measurements appear after the corresponding activity occurs.
 | `jerrychart.backfill.invocations` | Counter | `trigger` (Scheduled/Manual), `outcome` (Started/Completed/Skipped/Canceled/Failed) |
 | `jerrychart.backfill.duration.seconds` | Histogram | Trigger and terminal outcome; complete invocation time, including retry/cooldown waits |
 | `jerrychart.backfill.posts` | Counter | `trigger`, `result` (Resolved/Unavailable); results counted after their database transaction commits |
+| `jerrychart.archive.stalled` | Gauge | 1 when a generation stall has been declared, otherwise 0; not a heartbeat |
+| `jerrychart.archive.generation_mismatches.consecutive` | Gauge | Consecutive precisely recognized SDK generation mismatches |
+| `jerrychart.archive.stall.duration.seconds` | Gauge | Elapsed time since stall declaration, or 0 when not stalled |
+| `jerrychart.archive.no_progress.seconds` | Gauge | Time without successful processing or durable forward progress (observation age before first progress) |
+| `jerrychart.archive.retry.remaining.seconds` | Gauge | Seconds until the scheduled retry, or 0 when due / no retry scheduled |
 
 Counters are process-lifetime totals exported repeatedly as time series, not
 durable database totals. Use the dashboard's time-series view to observe changes
@@ -552,6 +530,35 @@ service policy, not a recommendation to retry every data/configuration error
 in other applications; permanent faults need operator correction. No dependency
 on those ETag exception messages is used for retry classification here.
 
+Visibility does narrowly recognize the SDK's exact resume-generation message
+and its structured `Archive download ETag mismatch for segment '…'` diagnostic.
+Only these `InvalidDataException` messages receive the bounded
+`ArchiveGenerationMismatch` error category; other invalid-data failures retain
+their existing category and full exception logging. The first mismatch in a
+consecutive run retains its full trace; repeated mismatches emit concise
+count/delay warnings. This does **not** change retry eligibility or delay.
+
+After **at least three consecutive generation mismatches** and **five minutes
+without successful event handling or durable forward checkpoint progress**,
+the monitor declares an archive stall and emits a single warning transition.
+Heartbeat sampling also detects the time threshold while a retry is waiting.
+Replanning, a new SDK client, an unchanged checkpoint write, a checksum change,
+or a different failure does not clear a declared stall. An unrelated failure
+resets the consecutive mismatch count, not the stall. Successful event processing
+or forward durable checkpoint advancement clears it and emits one recovery
+transition. Durable progress excludes metadata-only or rewound checkpoint changes;
+checkpoint writes do not reset the existing event-based retry schedule.
+
+These diagnostics are written on retries, attempt starts, recovery, and the
+15-second heartbeat cadence using separate pooled connections. Diagnostic-write
+failures are logged without changing recovery; a heartbeat write remains
+independent. Stalls survive monitor ownership/reconnect and process restarts via
+the diagnostic row. Checkpoint-only recovery is published by the next heartbeat;
+terminal status also flushes diagnostics and clears the scheduled retry timestamp
+without clearing a stall. Gauge collection reads only the in-memory tracker and never
+queries MySQL. All five gauges have no tags and describe last-observed processing,
+not worker liveness; consult the independent heartbeat for freshness.
+
 A fresh plan is an opportunity to recover, not a guarantee. Repeated mismatches
 can mean archive planning metadata and segment responses remain inconsistent,
 including at the server or CDN. Inspect the logged segment, expected/actual
@@ -571,6 +578,28 @@ logging can generate substantial output during replay. AppHost enables this
 category at Debug level; standalone execution retains the default Information level.
 
 ### Actor handles and API limits
+
+The processing details dialog groups **Handle refresh** after **Parent-URI backfill**,
+before the status refresh note. The API's `handleRefresh` object reports recorded
+activity, `pending` (all recurring scheduled refresh rows), `due`, and `nextDueAt`
+(earliest queued eligibility, null for an empty queue). Future daily/retry refreshes
+remain scheduled even for resolved accounts: these counts are not unresolved-account
+counts, completed work, or evidence of liveness. No actor identifiers are exposed.
+
+The updater records activity only after acquiring its `:actor-handles` database
+lock. It reuses the existing idempotent `ProcessingActivity` schema and run-ID fencing;
+no schema migration or changes to refresh eligibility/revision checks are needed.
+Its independent 15-second heartbeat continues while idle and during request pacing
+or server-directed rate-limit waits. These waits use `handle-refresh-waiting`;
+lookups and writes use `handle-refresh-running`, and empty due batches use
+`handle-refresh-idle`. Cancellation records `stopped`; unexpected terminal errors
+record `failure`. Retryable failures record `retrying` without an invented finish,
+release the lock connection, and retain the existing reconnect backoff: the old
+heartbeat stops during that wait and ages into stale until a new owner starts.
+An idle continuous worker does **not** record `completed` or a finish timestamp.
+Visibility-write failures are logged without changing actor resolution or retries.
+Older API snapshots without `handleRefresh` display unknown handle activity,
+not queue-derived liveness.
 
 A hosted background worker populates handles from the unauthenticated public
 AppView's `app.bsky.actor.getProfiles` endpoint. It batches up to 25 distinct DIDs,
@@ -648,18 +677,22 @@ so daily backfill is a safety net for pending legacy rows and retryable work
 left by interrupted invocations, not a requirement to resolve every new hit.
 It does not repeatedly retry terminal unavailable posts.
 
-The normal monitor process also schedules this same backfill **once daily at
-03:00 UTC**, using the small `ScheduledParentUriBackfill` background service.
+The normal monitor process also runs this same backfill **once on startup** and
+**once daily at 03:00 UTC**, using the small `ScheduledParentUriBackfill` background service.
 `AddParentUriBackfillScheduler()` registers it with the normal monitor host;
 schema initialization finishes before host startup. The service uses
 `TimeProvider` and cancellation-aware waits, checking the UTC clock at least
 once per minute to accommodate wall-clock adjustments.
-There is **no immediate startup backfill**. The shared schema is initialized
-before starting the scheduler; scheduled invocations also initialize it under
-their own resource lock.
+The shared schema is initialized before starting the scheduler; startup and
+daily invocations also initialize it under their own resource lock. The startup
+invocation uses the same locking, cancellation, and skip-if-locked behavior as
+daily runs. Once it finishes (or skips/fails), the next daily slot is calculated
+strictly after the current UTC time. Startup exactly at 03:00 UTC, or startup
+work crossing that boundary, therefore does not trigger a second immediate run.
 
 Scheduled work runs only while the normal monitor host is running. Missed daily
-runs are not durably recorded or replayed after a process restart. The service
+runs are not durably recorded or replayed after a process restart; startup is
+one invocation, not catch-up for each missed day. The service
 awaits each invocation and has an in-process overlap guard; the independent MySQL advisory
 lock prevent concurrent backfill workers, including across processes. If a
 manual invocation owns the lock at the scheduled time, the scheduled invocation
@@ -714,6 +747,47 @@ The internal named status enum preserves the database values: `Pending = 0`
 (unattempted), `Resolved = 1`, `Unavailable = 2`, and `RetryPending = 3`;
 only Pending and due RetryPending rows are selected by later invocations.
 
+### Privacy exclusions
+
+From the repository root, operators can permanently exclude an individual DID using the monitor CLI
+(configure `ConnectionStrings__jerrychart` for the intended database first):
+
+```powershell
+dotnet run --project JerryChart.Monitor -- exclude-did did:plc:example
+```
+
+Replace `did:plc:example` with the actual account DID, not its handle. Rebuild and
+restart the monitor with the exclusion-aware code before running this command.
+For a published deployment, run the equivalent command from the monitor's
+deployment directory:
+
+```powershell
+.\JerryChart.Monitor.exe exclude-did did:plc:example
+```
+
+This destructive command atomically deletes all stored replies authored by **or
+addressed to** that DID, removes its cached handle/status and refresh job, and
+stores the DID in a durable exclusion list to prevent re-ingestion. All reply
+counts, rankings, parent-post reports, and monthly statistics reflect the
+remaining records. There is no public exclusion endpoint or automatic unexclude
+command. Access is controlled by shell access and database credentials, not an
+application-level operator role. Keep those credentials server-side and restricted.
+Retaining the excluded DID is necessary to honor the request on future
+archive/live deliveries. Checkpoints are not reset, so other ingestion continues.
+The command can run alongside an **updated** monitor; restart older monitor
+instances before using it, as they do not enforce the block list. A successful
+log confirms committed deletion; failures/cancellation must not be treated as
+success. Refresh already-open pages to discard previously fetched reports.
+This removes records from the active database, not previously downloaded reports,
+old diagnostic logs, or any separately managed backups.
+
+The frontend serves a privacy policy at `/privacy`, linked from its shared footer.
+Short terms of use at `/terms` sit alongside it and cover accuracy, respectful
+use, availability, and contact.
+It describes public Bluesky metadata, historical retention, browser requests to
+Bluesky, operational logging, and the privacy contact. Keep it current when data
+collection, retention, hosting, or third-party integrations change.
+
 ## Native AOT readiness
 
 The API, monitor, and their shared Data/ServiceDefaults libraries enable
@@ -749,7 +823,7 @@ Use the API endpoint from the dashboard (Aspire assigns endpoints at runtime).
 | --- | --- | --- |
 | GET | `/statistics/reply-summary` | All-time `totalReplies`, `rightJerryReplies`, and `wrongJerryReplies` counts |
 | GET | `/statistics/last-updated` | `{ updatedAt }`: UTC ISO timestamp of the last new hit, or null if not yet recorded |
-| GET | `/statistics/processing-status` | No-store monitor/backfill activity, heartbeat freshness, and all-Hits parent-URI pending/retry/resolved/unavailable counts |
+| GET | `/statistics/processing-status` | No-store monitor/backfill/handle-updater activity, heartbeat freshness, all-Hits parent-URI counts, and aggregate handle refresh schedule eligibility |
 | GET | `/statistics/right-jerry/top-authors` | Up to ten authors: `did`, nullable current `handle`, and `replyCount` |
 | GET | `/statistics/right-jerry/top-posts` | Up to five resolved correct-Jerry parent posts: `atUri` and recorded `replyCount`; count descending, parent URI ascending for ties |
 | GET | `/statistics/right-jerry/authors` | Every author with matching replies to the correct Jerry, with `did`, nullable current `handle`, and `replyCount`; count descending, DID ascending for ties |

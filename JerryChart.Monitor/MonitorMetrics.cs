@@ -9,6 +9,8 @@ using System.Text.Json;
 
 using idunno.AtProto.Jetstream;
 
+using JerryChart.Data;
+
 using Microsoft.Extensions.Diagnostics.Metrics;
 
 using MySqlConnector;
@@ -48,6 +50,7 @@ internal enum ErrorCategory
     InvalidRequest,
     Json,
     InvalidData,
+    ArchiveGenerationMismatch,
     Transport,
     Configuration,
     Timeout,
@@ -179,6 +182,31 @@ internal static class MonitorMetrics
     private static readonly BackfillInvocations s_invocations = MonitorMetricInstruments.CreateBackfillInvocations(s_meter);
     private static readonly BackfillDuration s_backfillDuration = MonitorMetricInstruments.CreateBackfillDuration(s_meter);
     private static readonly BackfillPosts s_posts = MonitorMetricInstruments.CreateBackfillPosts(s_meter);
+    private static Func<ArchiveReplayStatus?> s_archiveStatus = () => null;
+    private static TimeProvider s_archiveClock = TimeProvider.System;
+    static MonitorMetrics()
+    {
+        s_meter.CreateObservableGauge(
+            "jerrychart.archive.stalled", () => s_archiveStatus()?.StalledSince is not null ? 1 : 0);
+        s_meter.CreateObservableGauge(
+            "jerrychart.archive.generation_mismatches.consecutive", () => s_archiveStatus()?.ConsecutiveGenerationMismatches ?? 0);
+        s_meter.CreateObservableGauge(
+            "jerrychart.archive.stall.duration.seconds", () => Age(s_archiveStatus()?.StalledSince));
+        s_meter.CreateObservableGauge(
+            "jerrychart.archive.no_progress.seconds", () => Age(s_archiveStatus()?.NoProgressSince));
+        s_meter.CreateObservableGauge(
+            "jerrychart.archive.retry.remaining.seconds", () =>
+                s_archiveStatus()?.NextRetryAt is { } retry ? Math.Max(0, (retry - s_archiveClock.GetUtcNow()).TotalSeconds) : 0);
+    }
+
+    internal static void ObserveArchive(ArchiveStallTracker tracker, TimeProvider clock)
+    {
+        s_archiveClock = clock;
+        s_archiveStatus = tracker.Snapshot;
+    }
+
+    private static double Age(DateTimeOffset? timestamp) =>
+        timestamp is { } time ? Math.Max(0, (s_archiveClock.GetUtcNow() - time).TotalSeconds) : 0;
 
     internal static MeterProviderBuilder AddMonitorMetrics(this MeterProviderBuilder builder)
     {
@@ -211,6 +239,7 @@ internal static class MonitorMetrics
         HttpRequestException => ErrorCategory.Http,
         WebSocketException => ErrorCategory.WebSocket,
         JsonException => ErrorCategory.Json,
+        InvalidDataException when ArchiveStallTracker.IsGenerationMismatch(exception) => ErrorCategory.ArchiveGenerationMismatch,
         InvalidDataException => ErrorCategory.InvalidData,
         TimeoutException => ErrorCategory.Timeout,
         OperationCanceledException => ErrorCategory.Cancellation,

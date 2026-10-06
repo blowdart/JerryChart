@@ -38,8 +38,14 @@ function SearchableAuthors({ authors }: { authors: TopReplyAuthor[] }) {
           const author = findAuthor(query);
           setMatch(author ?? null);
           const handle = query.trim().replace(/^@/, "").toLowerCase();
-          const hasMatches = handle && authors.some((candidate) => candidate.handle?.toLowerCase().includes(handle));
-          setMessage(author || hasMatches ? "" : "No matching handle in this list.");
+          const matches = handle
+            ? authors.filter((candidate) => candidate.handle?.toLowerCase().includes(handle))
+            : [];
+          setMessage(author
+            ? `Found ${author.handle ? `@${author.handle}` : "author"} in this list.`
+            : matches.length > 1
+              ? "Multiple matching handles; refine your search."
+              : "No matching handle in this list.");
           setSearchNumber((value) => value + 1);
         }}
       >
@@ -61,7 +67,7 @@ function SearchableAuthors({ authors }: { authors: TopReplyAuthor[] }) {
               }
             }}
             placeholder="@handle.bsky.social"
-            className="w-64 max-w-full min-w-0 rounded border px-3 py-1 text-sm"
+            className="w-64 max-w-full min-w-0 rounded border border-foreground/50 px-3 py-1 text-sm focus-visible:border-foreground focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-foreground"
           />
           <datalist id={suggestionsId}>
             {authors.filter((author) => author.handle !== null).map((author) => (
@@ -72,7 +78,9 @@ function SearchableAuthors({ authors }: { authors: TopReplyAuthor[] }) {
             <span aria-hidden="true">⌕</span>
           </Button>
         </div>
-        {message && <p role="status" className="text-sm text-muted-foreground">{message}</p>}
+        <p role="status" aria-live="polite" aria-atomic="true" className="text-sm text-muted-foreground">
+          {message}
+        </p>
       </form>
       <ReplyAuthorsTable
         authors={authors}

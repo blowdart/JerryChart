@@ -18,7 +18,7 @@ internal static partial class MonitorLog
     [LoggerMessage(3, LogLevel.Information, "Monitor stopped. The last durable checkpoint will be resumed on restart.")]
     internal static partial void MonitorStopped(ILogger logger);
 
-    [LoggerMessage(4, LogLevel.Information, "Starting Jerry no replay. Resuming saved progress: {HasProgress}.")]
+    [LoggerMessage(4, LogLevel.Information, "Starting Jetstream processing attempt. Resuming saved progress: {HasProgress}.")]
     internal static partial void StartingReplay(ILogger logger, bool hasProgress);
 
     [LoggerMessage(6, LogLevel.Information, "Listening to live Jetstream after sequence {Sequence}.")]
@@ -93,10 +93,10 @@ internal static partial class MonitorLog
     [LoggerMessage(30, LogLevel.Information, "Scheduled parent-URI backfill skipped: another invocation owns the database lock.")]
     internal static partial void ScheduledParentUriBackfillSkipped(ILogger logger);
 
-    [LoggerMessage(31, LogLevel.Information, "Daily parent-URI backfill is due. Attempting the independent database lock.")]
+    [LoggerMessage(31, LogLevel.Information, "Startup or daily parent-URI backfill is due. Attempting the independent database lock.")]
     internal static partial void ScheduledParentUriBackfillDue(ILogger logger);
 
-    [LoggerMessage(32, LogLevel.Information, "Parent-URI backfill scheduled daily at 03:00 UTC. No immediate startup invocation.")]
+    [LoggerMessage(32, LogLevel.Information, "Parent-URI backfill runs once at startup and daily at 03:00 UTC.")]
     internal static partial void ParentUriBackfillScheduleRegistered(ILogger logger);
 
     [LoggerMessage(34, LogLevel.Information, "Actor {Did} has no resolved handle; relay status {AccountStatus}. Rechecking in {RefreshSeconds} seconds.")]
@@ -110,4 +110,17 @@ internal static partial class MonitorLog
 
     [LoggerMessage(37, LogLevel.Warning, "Exclusion of actor {Did} was canceled. Verify exclusion state before assuming deletion completed.")]
     internal static partial void ExclusionCanceled(ILogger logger, Did did);
+
+    [LoggerMessage(38, LogLevel.Warning, "Archive stalled after {NoProgressSeconds} seconds without progress and {ConsecutiveMismatches} consecutive generation mismatches. Last progress: {LastProgressAt}; next retry: {NextRetryAt}. Heartbeat is independent; durable recovery is unchanged.")]
+    internal static partial void ArchiveStalled(ILogger logger, double noProgressSeconds, int consecutiveMismatches,
+        string lastProgressAt, DateTimeOffset? nextRetryAt);
+
+    [LoggerMessage(39, LogLevel.Information, "Archive recovered after {StallSeconds} seconds stalled. Successful processing or durable progress at {ProgressAt}.")]
+    internal static partial void ArchiveRecovered(ILogger logger, double stallSeconds, DateTimeOffset progressAt);
+
+    [LoggerMessage(40, LogLevel.Warning, "Archive generation mismatch repeated ({ConsecutiveMismatches} consecutive). Retrying unchanged durable progress in {DelaySeconds} seconds.")]
+    internal static partial void RepeatedArchiveMismatch(ILogger logger, int consecutiveMismatches, double delaySeconds);
+
+    [LoggerMessage(41, LogLevel.Information, "Jetstream processing started. The monitor owns the database lock and will resume durable archive or live progress.")]
+    internal static partial void JetstreamProcessingStarted(ILogger logger);
 }

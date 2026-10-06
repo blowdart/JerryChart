@@ -30,7 +30,8 @@ internal static class RetryLoop
 
     internal static async Task RunAsync(Func<Action, CancellationToken, Task> attempt, ILogger logger,
         CancellationToken cancellationToken, Func<TimeSpan, CancellationToken, Task>? wait = null,
-        Func<CancellationToken, Task>? retrying = null, bool retryDatabase = true)
+        Func<CancellationToken, Task>? retrying = null, bool retryDatabase = true,
+        ArchiveStallTracker? archiveStall = null)
     {
         wait ??= (delay, token) => Task.Delay(delay, token);
         int failures = 0;
@@ -57,7 +58,15 @@ internal static class RetryLoop
                 failures = Math.Min(failures + 1, s_retrySeconds.Length);
                 TimeSpan delay = Delay(failures);
                 MonitorMetrics.Retry(MetricOperation.Jetstream, exception, delay);
-                MonitorLog.RetryingMonitor(logger, exception, delay.TotalSeconds);
+                if (archiveStall?.Failure(exception, delay) == true)
+                {
+                    MonitorLog.RepeatedArchiveMismatch(logger, archiveStall.Snapshot().ConsecutiveGenerationMismatches,
+                        delay.TotalSeconds);
+                }
+                else
+                {
+                    MonitorLog.RetryingMonitor(logger, exception, delay.TotalSeconds);
+                }
                 try
                 {
                     if (retrying is not null)

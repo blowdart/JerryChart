@@ -1,5 +1,7 @@
 # JerryChart
 
+[![CI Build](https://github.com/blowdart/JerryChart/actions/workflows/ci-build.yml/badge.svg?branch=main)](https://github.com/blowdart/JerryChart/actions/workflows/ci-build.yml?query=branch%3Amain)
+
 **Jerry No** tracks Bluesky's collective failure to make Jerry Chen reconsider
 his choices. It records replies containing "Jerry no", distinguishes replies
 to the correct Jerry from everyone else, and displays counts, user rankings,

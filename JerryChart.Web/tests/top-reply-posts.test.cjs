@@ -52,6 +52,19 @@ const publicPost = (key, text) => ({ uri: uri(key), author: { did: rightJerryDid
 const response = (body, status = 200) => new Response(JSON.stringify(body), { status });
 const settle = () => new Promise((resolve) => setImmediate(resolve));
 
+test("social card generates a 1200 by 630 PNG without the statistics API", async () => {
+  const { default: SocialImage, size, alt, contentType } = modules()("app\\opengraph-image.tsx");
+  assert.deepEqual(size, { width: 1200, height: 630 });
+  assert.match(alt, /Jerry No/);
+  assert.equal(contentType, "image/png");
+  const image = SocialImage();
+  const bytes = Buffer.from(await image.arrayBuffer());
+  assert.deepEqual([...bytes.subarray(0, 8)], [137, 80, 78, 71, 13, 10, 26, 10]);
+  assert.equal(bytes.readUInt32BE(16), 1200);
+  assert.equal(bytes.readUInt32BE(20), 630);
+  assert.ok(bytes.length < 5 * 1024 * 1024);
+});
+
 test("privacy policy is readable without API access and linked in the shared footer", () => {
   const loadPolicy = modules({
     "next/font/google": {
@@ -71,7 +84,10 @@ test("privacy policy is readable without API access and linked in the shared foo
   }
   assert.ok(policy.includes('href="https://bsky.app/profile/blowdart.me"'));
   assert.ok(policy.includes('href="/"'));
-  const { default: RootLayout } = loadPolicy("app\\layout.tsx");
+  const { default: RootLayout, metadata: siteMetadata } = loadPolicy("app\\layout.tsx");
+  assert.equal(siteMetadata.openGraph.title, "Jerry No");
+  assert.equal(siteMetadata.openGraph.type, "website");
+  assert.equal(siteMetadata.twitter.card, "summary_large_image");
   const layout = renderToStaticMarkup(React.createElement(RootLayout, null, "Page content"));
   assert.ok(layout.includes('href="/privacy"'));
   assert.ok(layout.includes('href="/terms"'));

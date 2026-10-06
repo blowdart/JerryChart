@@ -761,8 +761,21 @@ integration), and install, lint, type-check, test, and production-build the
 frontend with Node.js 26. The monitor is excluded from integration startup, so
 CI needs no archive API key and does not contact the metered archive.
 TRX/diagnostic artifacts and frontend JUnit results are retained for 14 days,
-including failed runs. Workflow permissions are read-only, and action versions
-are pinned to immutable commits.
+including failed runs. After the entire CI run completes, the **Test Results**
+workflow downloads all test-result artifacts and invokes
+`EnricoMi/publish-unit-test-result-action` exactly once over the combined TRX
+and JUnit reports, publishing a check, job summary, failure annotations, and
+a PR comment. This also aggregates future matrix jobs; each matrix leg must
+upload a uniquely named artifact matching `*-test-results*`.
+
+Build jobs retain read-only permissions. Only the reporting job has permission
+to write checks and PR comments; it never checks out or executes PR code.
+The original CI event is preserved so reporting also works for Dependabot and
+fork PRs. Reports are published for successful and failed runs, not canceled
+runs; reporting fails when no test results are available rather than producing
+a passing result. The original CI checks remain the required merge gates.
+Both workflows pin action versions to immutable commits. The reporting workflow
+must be merged into the default branch before its `workflow_run` trigger is active.
 
 NuGet Central Package Management is enabled in `Directory.Packages.props`.
 All explicit package versions belong there; project `PackageReference` items

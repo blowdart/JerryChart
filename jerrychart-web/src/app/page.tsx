@@ -1,6 +1,7 @@
 import Image from "next/image";
 import { RefreshStatistics } from "@/components/refresh-statistics";
 import { ProcessingStatus } from "@/components/processing-status";
+import { ProfileHoverCard } from "@/components/profile-hover-card";
 import {
   Card,
   CardContent,
@@ -20,6 +21,7 @@ import { ReplyAuthorsDialog } from "@/components/reply-authors-dialog";
 import { StatisticsLastUpdated } from "@/components/statistics-last-updated";
 import { TopReplyPosts } from "@/components/top-reply-posts";
 import { getInitialProcessingStatus, getMonthlyRightJerryReplies, getReplySummary, getStatisticsLastUpdated, getTopRightJerryAuthors, getTopRightJerryPosts } from "@/lib/api";
+import { rightJerryDid } from "@/lib/reply-posts";
 
 export const dynamic = "force-dynamic";
 
@@ -37,7 +39,7 @@ export default async function Home() {
   return (
     <main className="mx-auto w-full max-w-4xl space-y-8 px-6 py-12">
       <header className="flex items-center gap-4">
-        <a href="https://bsky.app/profile/jcsalterego.bsky.social" className="shrink-0">
+        <ProfileHoverCard author={{ did: rightJerryDid, handle: "jcsalterego.bsky.social" }} className="shrink-0">
           <Image
             src="https://cdn.bsky.app/img/avatar/plain/did:plc:vc7f4oafdgxsihk4cry2xpze/bafkreigexuagm6poq5mbwq5oh3md2grrl4zk3mxqcbttfehveuatazsrgu"
             alt="Jerry Chen"
@@ -46,7 +48,7 @@ export default async function Home() {
             unoptimized
             className="size-20 rounded-full border object-cover"
           />
-        </a>
+        </ProfileHoverCard>
         <div className="min-w-0 space-y-2">
           <h1 className="text-4xl font-semibold tracking-tight">Jerry No</h1>
           <p className="text-muted-foreground">

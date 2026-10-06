@@ -125,6 +125,41 @@ test("profile hover triggers retain username defaults and support the introducti
   assert.ok(!avatar.includes("@jcsalterego.bsky.social"));
 });
 
+test("profile display text removes directional controls and bounds stacked marks without removing international text", () => {
+  const { profileDisplayText } = modules()("lib\\profile-display-text.ts");
+  assert.equal(profileDisplayText("a\u202eb\u2066c\u2069"), "abc");
+  assert.equal(profileDisplayText("Cafe\u0301 العربية 日本語 👩‍💻"), "Café العربية 日本語 👩‍💻");
+  assert.equal(profileDisplayText("x" + "\u030d".repeat(20) + "y"), "x" + "\u030d".repeat(3) + "y");
+});
+
+test("profile descriptions trim only leading whitespace and omit whitespace-only text", () => {
+  for (const [description, expected] of [
+    [" \r\n\n\tBiography\nSecond line  ", "Biography\nSecond line  "],
+    ["\u00a0\nBiography", "Biography"],
+    [" \r\n\t", null],
+  ]) {
+    let state = 0;
+    const passthrough = ({ children }) => React.createElement("div", null, children);
+    const { ProfileHoverCard } = modules({
+      react: {
+        ...React,
+        useState: (initial) => [state++ === 2
+          ? { did: rightJerryDid, handle: "example.test", description }
+          : initial, () => {}],
+      },
+      "@base-ui/react/preview-card": {
+        PreviewCard: Object.fromEntries(["Root", "Trigger", "Portal", "Positioner", "Popup"]
+          .map((name) => [name, passthrough])),
+      },
+    })("components\\profile-hover-card.tsx");
+    const markup = renderToStaticMarkup(React.createElement(ProfileHoverCard, {
+      author: { did: rightJerryDid, handle: "example.test" },
+    }));
+    if (expected === null) assert.doesNotMatch(markup, /whitespace-pre-wrap/);
+    else assert.ok(markup.includes(`>${expected}</p>`), markup);
+  }
+});
+
 test("unresolved account labels are not fake handles or profile links", () => {
   const { authorLabel, isReplyAuthorList } = modules()("lib\\reply-authors.ts");
   const { ProfileHoverCard } = modules()("components\\profile-hover-card.tsx");

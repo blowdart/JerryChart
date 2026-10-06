@@ -6,6 +6,7 @@ import { useEffect, useRef, useState, type ReactNode } from "react";
 import { getBlueskyProfile, profileAvatarUrl, type BlueskyProfile } from "@/lib/bluesky-profile";
 import { authorLabel, type TopReplyAuthor } from "@/lib/reply-authors";
 import { ProfileText } from "@/components/profile-text";
+import { profileDisplayText } from "@/lib/profile-display-text";
 
 export function ProfileHoverCard({ author, clickable = false, children, className }: {
   author: Pick<TopReplyAuthor, "did" | "handle" | "accountStatus">;
@@ -36,6 +37,8 @@ export function ProfileHoverCard({ author, clickable = false, children, classNam
   }, [open, author.did, author.handle, attempt]);
 
   const avatar = profileAvatarUrl(profile?.avatar);
+  const description = profile ? profileDisplayText(profile.description ?? "").trimStart() : "";
+  const displayName = profile ? profileDisplayText(profile.displayName ?? "").trim() || profile.handle : "";
   // Status labels are not handles: avoid @ prefixes, dead profile links, and futile hover requests.
   if (author.handle === null) {
     return <span title={author.did} className={className}>{children ?? authorLabel(author)}</span>;
@@ -61,9 +64,22 @@ export function ProfileHoverCard({ author, clickable = false, children, classNam
       </PreviewCard.Trigger>
       <PreviewCard.Portal container={container}>
         <PreviewCard.Positioner positionMethod="fixed" collisionBoundary={[]} sideOffset={8} className="z-50 max-w-[var(--available-width)]">
-          <PreviewCard.Popup className="w-80 max-w-[calc(100vw_-_2rem)] rounded-xl border bg-background p-4 text-left text-sm font-normal text-foreground shadow-xl">
+          <PreviewCard.Popup className="relative w-80 max-w-[calc(100vw_-_2rem)] rounded-xl border bg-background p-4 text-left text-sm font-normal text-foreground shadow-xl">
+            <button
+              type="button"
+              aria-label="Close profile details"
+              className="absolute right-2 top-2 flex size-8 items-center justify-center rounded hover:bg-muted focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-foreground"
+              onClick={() => {
+                setOpen(false);
+                trigger.current?.focus();
+              }}
+            >
+              <svg aria-hidden="true" width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2">
+                <path d="M4 4l8 8M12 4l-8 8" />
+              </svg>
+            </button>
             {error ? (
-              <div role="alert" className="space-y-2">
+              <div role="alert" className="space-y-2 pr-8">
                 <p>Unable to load this Bluesky profile.</p>
                 <button type="button" className="rounded border px-3 py-1" onClick={() => {
                   setProfile(null);
@@ -74,20 +90,20 @@ export function ProfileHoverCard({ author, clickable = false, children, classNam
                 </button>
               </div>
             ) : profile === null ? (
-              <p role="status">Loading Bluesky profile...</p>
+              <p role="status" className="pr-8">Loading Bluesky profile...</p>
             ) : (
               <div className="space-y-3">
-                <div className="flex items-center gap-3">
+                <div className="flex items-center gap-3 pr-8">
                   {avatar && (
                     <Image src={avatar} alt="" width={48} height={48} unoptimized className="size-12 shrink-0 rounded-full object-cover" />
                   )}
-                  <div className="min-w-0 break-words">
-                    <p className="font-semibold"><ProfileText text={profile.displayName || profile.handle} /></p>
-                    <p className="text-muted-foreground">@{profile.handle}</p>
+                  <div className="min-w-0 flex-1">
+                    <p className="truncate font-semibold" dir="auto" title={displayName}>{displayName}</p>
+                    <p className="truncate text-muted-foreground" dir="ltr" title={`@${profile.handle}`}>@{profile.handle}</p>
                   </div>
                 </div>
-                {profile.description && (
-                  <p className="max-h-48 overflow-y-auto whitespace-pre-wrap break-words"><ProfileText text={profile.description} /></p>
+                {description && (
+                  <p className="max-h-48 overflow-y-auto whitespace-pre-wrap break-words"><ProfileText text={description} /></p>
                 )}
                 <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground">
                   {profile.followersCount !== undefined && <span>{profile.followersCount.toLocaleString()} followers</span>}

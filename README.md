@@ -754,8 +754,8 @@ JavaScript, a UTC timestamp is displayed instead.
 
 ## Packages and testing
 
-The **CI Build** GitHub Actions workflow runs on every push to any branch and
-on pull requests. Separate Ubuntu jobs build .NET 10 and run all
+The **CI Build** GitHub Actions workflow runs on pushes to `main` and
+on pull requests targeting `main`. Separate Ubuntu jobs build .NET 10 and run all
 Microsoft.Testing.Platform tests (including isolated Docker/MySQL and Next.js
 integration), and install, lint, type-check, test, and production-build the
 frontend with Node.js 26. The monitor is excluded from integration startup, so

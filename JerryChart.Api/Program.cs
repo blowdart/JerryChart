@@ -6,18 +6,20 @@ using JerryChart.Data;
 
 using MySqlConnector;
 
-var builder = WebApplication.CreateBuilder(args);
+WebApplicationBuilder builder = WebApplication.CreateBuilder(args);
 builder.AddServiceDefaults();
 builder.AddJerryChartDatabase();
+builder.Services.AddOpenTelemetry().WithMetrics(metrics => metrics.AddApiMetrics());
+builder.Services.AddHostedService<CheckpointFreshnessSampler>();
 builder.Services.AddProblemDetails();
 builder.Services.ConfigureHttpJsonOptions(options =>
     options.SerializerOptions.TypeInfoResolverChain.Insert(0, ApiJsonContext.Default));
 
-var app = builder.Build();
+WebApplication app = builder.Build();
 app.UseExceptionHandler();
 app.MapDefaultEndpoints();
 
-await using (var connection = await app.Services.GetRequiredService<MySqlDataSource>()
+await using (MySqlConnection connection = await app.Services.GetRequiredService<MySqlDataSource>()
     .OpenConnectionAsync(app.Lifetime.ApplicationStopping))
 {
     await MonitorSchema.InitializeAsync(connection, app.Lifetime.ApplicationStopping);
@@ -25,31 +27,39 @@ await using (var connection = await app.Services.GetRequiredService<MySqlDataSou
 ApiLog.DatabaseInitialized(app.Logger);
 
 app.MapGet("/statistics/reply-summary", async (StatisticsStore store, CancellationToken cancellationToken) =>
-    TypedResults.Ok(await store.GetReplySummaryAsync(cancellationToken)));
+    TypedResults.Ok(await ApiMetrics.QueryAsync(StatisticsReport.Summary,
+        () => store.GetReplySummaryAsync(cancellationToken), cancellationToken)));
 
 app.MapGet("/statistics/last-updated", async (StatisticsStore store, CancellationToken cancellationToken) =>
-    TypedResults.Ok(await store.GetLastUpdatedAsync(cancellationToken)));
+    TypedResults.Ok(await ApiMetrics.QueryAsync(StatisticsReport.LastUpdated,
+        () => store.GetLastUpdatedAsync(cancellationToken), cancellationToken)));
 
 app.MapGet("/statistics/processing-status", async (ProcessingStatusStore store, HttpContext context,
     CancellationToken cancellationToken) =>
 {
     context.Response.Headers.CacheControl = "no-store";
-    return TypedResults.Ok(await store.GetAsync(cancellationToken));
+    return TypedResults.Ok(await ApiMetrics.QueryAsync(StatisticsReport.ProcessingStatus,
+        () => store.GetAsync(cancellationToken), cancellationToken));
 });
 
 app.MapGet("/statistics/right-jerry/top-authors", async (StatisticsStore store, CancellationToken cancellationToken) =>
-    TypedResults.Ok(await store.GetTopRightJerryAuthorsAsync(cancellationToken)));
+    TypedResults.Ok(await ApiMetrics.QueryAsync(StatisticsReport.TopAuthors,
+        () => store.GetTopRightJerryAuthorsAsync(cancellationToken), cancellationToken, result => result.Count)));
 
 app.MapGet("/statistics/right-jerry/top-posts", async (StatisticsStore store, CancellationToken cancellationToken) =>
-    TypedResults.Ok(await store.GetTopRightJerryPostsAsync(cancellationToken)));
+    TypedResults.Ok(await ApiMetrics.QueryAsync(StatisticsReport.TopPosts,
+        () => store.GetTopRightJerryPostsAsync(cancellationToken), cancellationToken, result => result.Count)));
 
 app.MapGet("/statistics/right-jerry/authors", async (StatisticsStore store, CancellationToken cancellationToken) =>
-    TypedResults.Ok(await store.GetAllRightJerryAuthorsAsync(cancellationToken)));
+    TypedResults.Ok(await ApiMetrics.QueryAsync(StatisticsReport.Authors,
+        () => store.GetAllRightJerryAuthorsAsync(cancellationToken), cancellationToken, result => result.Count)));
 
 app.MapGet("/statistics/right-jerry/monthly-replies", async (StatisticsStore store, CancellationToken cancellationToken) =>
-    TypedResults.Ok(await store.GetMonthlyRightJerryRepliesAsync(cancellationToken)));
+    TypedResults.Ok(await ApiMetrics.QueryAsync(StatisticsReport.MonthlyReplies,
+        () => store.GetMonthlyRightJerryRepliesAsync(cancellationToken), cancellationToken, result => result.Count)));
 
 app.MapGet("/statistics/right-jerry/all-time-monthly-replies", async (StatisticsStore store, CancellationToken cancellationToken) =>
-    TypedResults.Ok(await store.GetAllTimeRightJerryRepliesAsync(cancellationToken)));
+    TypedResults.Ok(await ApiMetrics.QueryAsync(StatisticsReport.AllTimeMonthlyReplies,
+        () => store.GetAllTimeRightJerryRepliesAsync(cancellationToken), cancellationToken, result => result.Count)));
 
 await app.RunAsync();

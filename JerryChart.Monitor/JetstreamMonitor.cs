@@ -1,6 +1,8 @@
 // Copyright (c) Barry Dorrans. All rights reserved.
 // Licensed under the MIT License.
 
+using System.Diagnostics;
+
 using idunno.AtProto;
 using idunno.AtProto.Jetstream;
 using idunno.AtProto.Jetstream.Archive;
@@ -25,6 +27,11 @@ internal static class JetstreamMonitor
             await RetryLoop.RunAsync((progress, token) => RunAttemptAsync(dataSource, apiKey, service,
                 logger, progress, activity => lastActivity = activity, token), logger, cancellationToken);
         }
+        catch (Exception exception) when (!RetryLoop.IsRetryable(exception))
+        {
+            MonitorMetrics.Error(MetricOperation.Jetstream, exception);
+            throw;
+        }
         finally
         {
             if (cancellationToken.IsCancellationRequested && lastActivity is not null)
@@ -44,7 +51,7 @@ internal static class JetstreamMonitor
         await connection.OpenAsync(cancellationToken);
         var store = new MonitorStore(connection);
         await store.InitializeAsync(cancellationToken);
-        await using var activity = await ProcessingActivity.StartAsync(dataSource, logger, "monitor", "archive",
+        await using ProcessingActivity activity = await ProcessingActivity.StartAsync(dataSource, logger, "monitor", "archive",
             ":jerry-no-v1", connection, TimeProvider.System, cancellationToken);
         started(activity);
         await activity.ExecuteAsync(() => RetryLoop.RunAsync(
@@ -71,6 +78,11 @@ internal static class JetstreamMonitor
         }
 
         MonitorLog.StartingReplay(logger, saved is not null);
+        // The SDK must own its HTTP client: this version rejects cross-origin archive redirects when given an
+        // external factory, including the archive's HTTPS CDN redirect. Its owned client already uses
+        // idunno.Security.Ssrf for HTTP and WebSocket connections, with automatic redirects disabled.
+        // This preserves manual SDK redirect validation and SSRF checks on the CDN connection; do not replace
+        // it with an external factory or enable automatic redirects to work around the archive policy.
         await using var jetstream = new AtProtoJetstream(uri: service, options: new JetstreamOptions
         {
             ApiKey = apiKey,
@@ -106,8 +118,9 @@ internal static class JetstreamMonitor
             }, cancellationToken: cancellationToken,
                 onArchiveError: (sequence, exception) => HandleArchiveError(sequence, exception, logger)))
             {
-                MonitorLog.ProcessingArchiveEvent(logger, item.Sequence, item.Kind);
+                long started = Stopwatch.GetTimestamp();
                 await ProcessAsync(item, store, logger, cancellationToken);
+                MonitorMetrics.EventProcessed(EventSource.Archive, item.Kind, started);
                 if (item.Sequence is long sequence)
                 {
                     lastProcessedSequence = Math.Max(lastProcessedSequence, sequence);
@@ -131,8 +144,8 @@ internal static class JetstreamMonitor
         await activity.ChangeAsync("live", cancellationToken);
         try
         {
-            jetstream.KindFilter = [JetStreamEventKind.Commit, JetStreamEventKind.Identity];
-            await foreach (var item in jetstream.StreamAsync(progress.LiveAfterSeq, maximumReconnectAttempts: 0,
+            jetstream.KindFilter = [JetStreamEventKind.Commit, JetStreamEventKind.Identity, JetStreamEventKind.Account];
+            await foreach (JetstreamEvent item in jetstream.StreamAsync(progress.LiveAfterSeq, maximumReconnectAttempts: 0,
                 cancellationToken))
             {
                 if (item.Sequence is not long sequence)
@@ -145,11 +158,12 @@ internal static class JetstreamMonitor
                     continue;
                 }
 
-                MonitorLog.ProcessingLiveEvent(logger, sequence, item.Kind);
+                long started = Stopwatch.GetTimestamp();
                 await ProcessAsync(item, store, logger, cancellationToken);
-                var next = progress with { LiveAfterSeq = sequence };
+                MonitorProgress next = progress with { LiveAfterSeq = sequence };
                 store.SaveProgress(next);
                 progress = next;
+                MonitorMetrics.EventProcessed(EventSource.Live, item.Kind, started);
                 processedEvent();
             }
         }
@@ -172,11 +186,13 @@ internal static class JetstreamMonitor
         // and must reach RetryLoop; skipping a block here is not generation recovery and intentionally loses data.
         if (sequence is long recordSequence)
         {
+            MonitorMetrics.Error(MetricOperation.ArchiveRecord, exception);
             MonitorLog.SkippingArchiveRecord(logger, exception, recordSequence);
 
             return JetstreamArchiveErrorAction.SkipRecord;
         }
 
+        MonitorMetrics.Error(MetricOperation.ArchiveBlock, exception);
         MonitorLog.SkippingArchiveBlock(logger, exception);
 
         return JetstreamArchiveErrorAction.SkipBlock;
@@ -185,15 +201,15 @@ internal static class JetstreamMonitor
     internal static async Task ProcessAsync(JetstreamEvent item, MonitorStore store, ILogger logger,
         CancellationToken cancellationToken)
     {
-        if (item is JetstreamIdentityEvent)
+        if (item is JetstreamIdentityEvent or JetstreamAccountEvent)
         {
             await new ActorStore(store.Connection).InvalidateAsync(item.Did, cancellationToken);
             return;
         }
 
-        if (ReplyMatcher.Match(item, logger) is { } hit)
+        if (ReplyMatcher.Match(item, logger) is { } hit &&
+            await store.SaveHitAsync(hit, cancellationToken))
         {
-            await store.SaveHitAsync(hit, cancellationToken);
             MonitorLog.MatchedReply(logger, hit.AtUri, hit.AuthorDid, hit.ParentAuthorDid);
         }
     }

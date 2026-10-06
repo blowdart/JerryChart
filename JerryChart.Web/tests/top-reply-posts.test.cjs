@@ -52,6 +52,48 @@ const publicPost = (key, text) => ({ uri: uri(key), author: { did: rightJerryDid
 const response = (body, status = 200) => new Response(JSON.stringify(body), { status });
 const settle = () => new Promise((resolve) => setImmediate(resolve));
 
+test("privacy policy is readable without API access and linked in the shared footer", () => {
+  const loadPolicy = modules({
+    "next/font/google": {
+      Geist: () => ({ variable: "geist" }),
+      Geist_Mono: () => ({ variable: "geist-mono" }),
+    },
+    "./globals.css": {},
+  });
+  const { default: PrivacyPolicy, metadata } = loadPolicy("app\\privacy\\page.tsx");
+  const policy = renderToStaticMarkup(React.createElement(PrivacyPolicy));
+  assert.equal(metadata.title, "Privacy policy | Jerry No");
+  for (const text of ["Public Bluesky data", "Visiting this website", "Requests to Bluesky",
+    "Questions and requests", "no automatic expiry", "does not automatically remove", "@blowdart.me",
+    "available to anyone through the AT Protocol", "No AI is used to process this data",
+    "train AI models"]) {
+    assert.ok(policy.includes(text), text);
+  }
+  assert.ok(policy.includes('href="https://bsky.app/profile/blowdart.me"'));
+  assert.ok(policy.includes('href="/"'));
+  const { default: RootLayout } = loadPolicy("app\\layout.tsx");
+  const layout = renderToStaticMarkup(React.createElement(RootLayout, null, "Page content"));
+  assert.ok(layout.includes('href="/privacy"'));
+  assert.ok(layout.includes('href="/terms"'));
+  assert.ok(layout.includes("justify-end"));
+  assert.ok(layout.includes('aria-label="Legal"'));
+  assert.ok(layout.includes("Page content"));
+});
+
+test("short terms explain limitations, respectful use, privacy and contact", () => {
+  const { default: TermsOfUse, metadata } = modules()("app\\terms\\page.tsx");
+  const markup = renderToStaticMarkup(React.createElement(TermsOfUse));
+  assert.equal(metadata.title, "Terms of use | Jerry No");
+  for (const text of ["Terms of use", "incomplete, delayed, or inaccurate",
+    "harass, threaten, or target", "No promises of availability",
+    "cannot legally be excluded", "@blowdart.me"]) {
+    assert.ok(markup.includes(text), text);
+  }
+  assert.ok(markup.includes('href="/privacy"'));
+  assert.ok(markup.includes('href="https://bsky.app/profile/blowdart.me"'));
+  assert.ok(markup.includes('href="/"'));
+});
+
 test("profile hover triggers retain username defaults and support the introduction avatar", () => {
   const { ProfileHoverCard } = modules()("components\\profile-hover-card.tsx");
   const author = { did: rightJerryDid, handle: "jcsalterego.bsky.social" };
@@ -65,6 +107,27 @@ test("profile hover triggers retain username defaults and support the introducti
   assert.ok(avatar.includes('alt="Jerry Chen"'));
   assert.ok(avatar.includes("shrink-0"));
   assert.ok(!avatar.includes("@jcsalterego.bsky.social"));
+});
+
+test("unresolved account labels are not fake handles or profile links", () => {
+  const { authorLabel, isReplyAuthorList } = modules()("lib\\reply-authors.ts");
+  const { ProfileHoverCard } = modules()("components\\profile-hover-card.tsx");
+  for (const [status, label] of [
+    ["deleted", "Deleted"], ["suspended", "Suspended"], ["deactivated", "Deactivated"],
+    ["takendown", "Taken down"], ["desynchronized", "Desynchronized"],
+    ["throttled", "Throttled"], ["inactive", "Inactive"], [null, "Unresolved"],
+  ]) {
+    const author = { did: rightJerryDid, handle: null, accountStatus: status, replyCount: 1 };
+    assert.equal(authorLabel(author), label);
+    assert.equal(isReplyAuthorList([author]), true);
+    const markup = renderToStaticMarkup(React.createElement(ProfileHoverCard, { author }));
+    assert.ok(markup.includes(label));
+    assert.ok(markup.includes(rightJerryDid));
+    assert.ok(!markup.includes("href="));
+    assert.ok(!markup.includes(`@${label}`));
+  }
+  assert.equal(authorLabel({ handle: "resolved.example", accountStatus: "deactivated" }), "@resolved.example");
+  assert.equal(isReplyAuthorList([{ did: rightJerryDid, handle: null, accountStatus: "invented", replyCount: 1 }]), false);
 });
 
 function replaceFetch(context, fetch) {

@@ -12,8 +12,8 @@ internal static class BackfillDatabaseRetry
     internal static async Task RunAsync(
         Func<Action, CancellationToken, Task> attempt,
         ILogger logger,
-        CancellationToken cancellationToken,
-        Func<TimeSpan, CancellationToken, Task> wait)
+        Func<TimeSpan, CancellationToken, Task> wait,
+        CancellationToken cancellationToken)
     {
         int failures = 0;
         while (true)
@@ -32,6 +32,7 @@ internal static class BackfillDatabaseRetry
             {
                 failures = Math.Min(failures + 1, 7);
                 TimeSpan delay = RetryLoop.Delay(failures);
+                MonitorMetrics.Retry(MetricOperation.BackfillDatabase, exception, delay);
                 MonitorLog.RetryingBackfillDatabase(logger, exception, delay.TotalSeconds);
                 await wait(delay, cancellationToken);
             }

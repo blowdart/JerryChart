@@ -1,6 +1,7 @@
 name: Test Results
 
-on:
+# Privileged reporting parses artifacts only; it never checks out or executes PR code.
+on: # zizmor: ignore[dangerous-triggers]
   workflow_run:
     workflows: ["CI Build"]
     types: [completed]

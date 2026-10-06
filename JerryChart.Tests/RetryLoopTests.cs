@@ -37,7 +37,7 @@ public sealed class RetryLoopTests
 
             return Task.CompletedTask;
         });
-        CollectionAssert.AreEqual(new double[] { 1, 5, 15, 30, 90, 150, 300, 300, 300, 300 }, waits);
+        Assert.AreSequenceEqual(new double[] { 1, 5, 15, 30, 90, 150, 300, 300, 300, 300 }, waits);
         Assert.AreEqual(10, attempts);
     }
 
@@ -67,7 +67,7 @@ public sealed class RetryLoopTests
 
             return Task.CompletedTask;
         });
-        CollectionAssert.AreEqual(new double[] { 1, 5, 1, 5 }, waits);
+        Assert.AreSequenceEqual(new double[] { 1, 5, 1, 5 }, waits);
     }
 
     /// <summary>Verifies authentication refusals are logged and retried rather than terminating.</summary>

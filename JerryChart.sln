@@ -1,7 +1,7 @@
 ﻿
 Microsoft Visual Studio Solution File, Format Version 12.00
 # Visual Studio Version 18
-VisualStudioVersion = 18.10.12224.181 stable
+VisualStudioVersion = 18.10.12224.181
 MinimumVisualStudioVersion = 17.8.0.0
 Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "JerryChart.AppHost", "JerryChart.AppHost\JerryChart.AppHost.csproj", "{5373A0CF-75F2-42D2-809B-937E36A6D569}"
 EndProject
@@ -27,17 +27,21 @@ Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "Solution Items", "Solution 
 		LICENSE = LICENSE
 		nuget.config = nuget.config
 		README.md = README.md
+		SECURITY.md = SECURITY.md
 	EndProjectSection
 EndProject
 Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = ".github", ".github", "{5C91112B-93DB-4311-B9C3-B56992B04E05}"
 	ProjectSection(SolutionItems) = preProject
 		.github\CODEOWNERS = .github\CODEOWNERS
+		.github\copilot-instructions.md = .github\copilot-instructions.md
 		.github\dependabot.yml = .github\dependabot.yml
+		.github\dependency-review-config.yml = .github\dependency-review-config.yml
 	EndProjectSection
 EndProject
 Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "instructions", "instructions", "{418377F7-95F1-4FD1-AE29-9D030BA1CED1}"
 	ProjectSection(SolutionItems) = preProject
 		.github\instructions\docs.instructions.md = .github\instructions\docs.instructions.md
+		.github\instructions\tests.instructions.md = .github\instructions\tests.instructions.md
 	EndProjectSection
 EndProject
 Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "prompts", "prompts", "{AC57D8BE-F981-4AFC-93CA-286E16AB8C70}"
@@ -48,8 +52,13 @@ EndProject
 Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "workflows", "workflows", "{0D2D4BBF-7FC1-405A-9D65-74A5D144B59A}"
 	ProjectSection(SolutionItems) = preProject
 		.github\workflows\ci-build.yml = .github\workflows\ci-build.yml
+		.github\workflows\codeql.yml = .github\workflows\codeql.yml
+		.github\workflows\dependency-review.yml = .github\workflows\dependency-review.yml
 		.github\workflows\test-results.yml = .github\workflows\test-results.yml
+		.github\workflows\zizmor.yml = .github\workflows\zizmor.yml
 	EndProjectSection
+EndProject
+Project("{54A90642-561A-4BB1-A94E-469ADEE60C69}") = "JerryChart.Web", "JerryChart.Web\JerryChart.Web.esproj", "{7EE3CAB5-7DF2-4B04-BDA7-5D29481DC66B}"
 EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
@@ -133,14 +142,20 @@ Global
 		{13912421-D3E2-4BDB-98F1-16E974DAC53D}.Release|x64.Build.0 = Release|Any CPU
 		{13912421-D3E2-4BDB-98F1-16E974DAC53D}.Release|x86.ActiveCfg = Release|Any CPU
 		{13912421-D3E2-4BDB-98F1-16E974DAC53D}.Release|x86.Build.0 = Release|Any CPU
+		{7EE3CAB5-7DF2-4B04-BDA7-5D29481DC66B}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{7EE3CAB5-7DF2-4B04-BDA7-5D29481DC66B}.Debug|x64.ActiveCfg = Debug|Any CPU
+		{7EE3CAB5-7DF2-4B04-BDA7-5D29481DC66B}.Debug|x86.ActiveCfg = Debug|Any CPU
+		{7EE3CAB5-7DF2-4B04-BDA7-5D29481DC66B}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{7EE3CAB5-7DF2-4B04-BDA7-5D29481DC66B}.Release|x64.ActiveCfg = Release|Any CPU
+		{7EE3CAB5-7DF2-4B04-BDA7-5D29481DC66B}.Release|x86.ActiveCfg = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
 	EndGlobalSection
 	GlobalSection(NestedProjects) = preSolution
-		{0D2D4BBF-7FC1-405A-9D65-74A5D144B59A} = {5C91112B-93DB-4311-B9C3-B56992B04E05}
 		{418377F7-95F1-4FD1-AE29-9D030BA1CED1} = {5C91112B-93DB-4311-B9C3-B56992B04E05}
 		{AC57D8BE-F981-4AFC-93CA-286E16AB8C70} = {5C91112B-93DB-4311-B9C3-B56992B04E05}
+		{0D2D4BBF-7FC1-405A-9D65-74A5D144B59A} = {5C91112B-93DB-4311-B9C3-B56992B04E05}
 	EndGlobalSection
 	GlobalSection(ExtensibilityGlobals) = postSolution
 		SolutionGuid = {73D216A1-6317-418B-9BC7-4BE150646F4D}

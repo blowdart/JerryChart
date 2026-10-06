@@ -32,12 +32,12 @@ public sealed class BackfillDatabaseRetryTests
             }
 
             return Task.CompletedTask;
-        }, NullLogger.Instance, CancellationToken.None, (delay, _) =>
+        }, NullLogger.Instance, cancellationToken: CancellationToken.None, wait: (delay, _) =>
         {
             waits.Add(delay.TotalSeconds);
             return Task.CompletedTask;
         });
-        CollectionAssert.AreEqual(new double[] { 1, 5, 15, 30, 90, 150, 300, 300, 300, 300 }, waits);
+        Assert.AreSequenceEqual(new double[] { 1, 5, 15, 30, 90, 150, 300, 300, 300, 300 }, waits);
         Assert.AreEqual(11, attempts);
     }
 
@@ -62,12 +62,12 @@ public sealed class BackfillDatabaseRetryTests
             }
 
             throw failure;
-        }, NullLogger.Instance, CancellationToken.None, (delay, _) =>
+        }, NullLogger.Instance, cancellationToken: CancellationToken.None, wait: (delay, _) =>
         {
             waits.Add(delay.TotalSeconds);
             return Task.CompletedTask;
         });
-        CollectionAssert.AreEqual(new double[] { 1, 5, 1, 5 }, waits);
+        Assert.AreSequenceEqual(new double[] { 1, 5, 1, 5 }, waits);
     }
 
     /// <summary>Verifies malformed data, configuration, and duplicate-lock errors are not retried.</summary>
@@ -86,7 +86,7 @@ public sealed class BackfillDatabaseRetryTests
             int waits = 0;
             Exception actual = await Assert.ThrowsAsync<Exception>(() =>
                 BackfillDatabaseRetry.RunAsync((_, _) => throw failure, NullLogger.Instance,
-                    CancellationToken.None, (_, _) =>
+                    cancellationToken: CancellationToken.None, wait: (_, _) =>
                     {
                         waits++;
                         return Task.CompletedTask;
@@ -109,7 +109,7 @@ public sealed class BackfillDatabaseRetryTests
             {
                 attempts++;
                 throw failure;
-            }, NullLogger.Instance, shutdown.Token, async (_, token) =>
+            }, NullLogger.Instance, cancellationToken: shutdown.Token, wait: async (_, token) =>
             {
                 await shutdown.CancelAsync();
                 await Task.Delay(Timeout.InfiniteTimeSpan, token);
@@ -130,7 +130,7 @@ public sealed class BackfillDatabaseRetryTests
             {
                 attempts++;
                 return Task.CompletedTask;
-            }, NullLogger.Instance, shutdown.Token, (_, _) => Task.CompletedTask));
+            }, NullLogger.Instance, cancellationToken: shutdown.Token, wait: (_, _) => Task.CompletedTask));
         Assert.AreEqual(0, attempts);
     }
 
@@ -147,7 +147,7 @@ public sealed class BackfillDatabaseRetryTests
             {
                 shutdown.Cancel();
                 throw failure;
-            }, NullLogger.Instance, shutdown.Token, (_, _) =>
+            }, NullLogger.Instance, cancellationToken: shutdown.Token, wait: (_, _) =>
             {
                 waits++;
                 return Task.CompletedTask;

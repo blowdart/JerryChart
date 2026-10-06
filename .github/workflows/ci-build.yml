@@ -35,6 +35,8 @@ jobs:
     steps:
       - name: Check out source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       - name: Set up .NET
         uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
@@ -47,8 +49,8 @@ jobs:
           node-version: "26"
           cache: npm
           cache-dependency-path: |
-            jerrychart-web/package-lock.json
-            jerrychart-web/tooling/lint/package-lock.json
+            JerryChart.Web/package-lock.json
+            JerryChart.Web/tooling/lint/package-lock.json
 
       - name: Verify Docker
         run: docker info
@@ -79,10 +81,12 @@ jobs:
     timeout-minutes: 15
     defaults:
       run:
-        working-directory: jerrychart-web
+        working-directory: JerryChart.Web
     steps:
       - name: Check out source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       - name: Set up Node.js
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
@@ -90,8 +94,8 @@ jobs:
           node-version: "26"
           cache: npm
           cache-dependency-path: |
-            jerrychart-web/package-lock.json
-            jerrychart-web/tooling/lint/package-lock.json
+            JerryChart.Web/package-lock.json
+            JerryChart.Web/tooling/lint/package-lock.json
 
       - name: Install dependencies
         run: npm ci
@@ -117,6 +121,6 @@ jobs:
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: frontend-test-results
-          path: jerrychart-web/frontend-tests.xml
+          path: JerryChart.Web/frontend-tests.xml
           if-no-files-found: warn
           retention-days: 14

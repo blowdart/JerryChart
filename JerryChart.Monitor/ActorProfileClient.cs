@@ -13,6 +13,56 @@ internal sealed class ActorProfileClient(
     Func<TimeSpan, CancellationToken, Task>? wait = null)
 {
     private readonly AppViewRateLimiter _rateLimiter = new(timeProvider, wait);
+    private readonly AppViewRateLimiter _statusRateLimiter = new(timeProvider, wait);
+
+    internal async Task<ActorResolution> ResolveMissingAsync(Did did, CancellationToken cancellationToken)
+    {
+        // The relay reports its own hosting/moderation state, not necessarily AppView or PDS policy.
+        // Use a fixed SSRF-protected origin rather than trusting arbitrary service URLs from DID documents.
+        using HttpResponseMessage response = await _statusRateLimiter.SendAsync(
+            token => httpClient.GetAsync(
+                $"https://bsky.network/xrpc/com.atproto.sync.getRepoStatus?did={Uri.EscapeDataString(did.ToString())}", token),
+            cancellationToken);
+        using var document = JsonDocument.Parse(await response.Content.ReadAsStringAsync(cancellationToken));
+        JsonElement root = document.RootElement;
+        if (response.StatusCode is System.Net.HttpStatusCode.BadRequest or System.Net.HttpStatusCode.NotFound &&
+            root.TryGetProperty("error", out JsonElement error) && error.GetString() == "RepoNotFound")
+        {
+            // The relay uses HTTP 404 for RepoNotFound; other implementations may use 400.
+            // Absence from this relay does not prove deletion. Keep the normal unknown-profile retry.
+            return new(null, null);
+        }
+
+        response.EnsureSuccessStatusCode();
+        if (!root.TryGetProperty("did", out JsonElement returnedDid) || returnedDid.ValueKind != JsonValueKind.String ||
+            returnedDid.GetString() != did.ToString() ||
+            !root.TryGetProperty("active", out JsonElement active) ||
+            active.ValueKind is not (JsonValueKind.True or JsonValueKind.False))
+        {
+            throw new InvalidDataException("The relay returned an invalid repository status.");
+        }
+
+        if (active.GetBoolean())
+        {
+            return new(null, null);
+        }
+
+        string? status = null;
+        if (root.TryGetProperty("status", out JsonElement statusValue))
+        {
+            if (statusValue.ValueKind != JsonValueKind.String)
+            {
+                throw new InvalidDataException("The relay returned a non-string repository status.");
+            }
+            status = statusValue.GetString();
+        }
+
+        return new(null, status switch
+        {
+            "deleted" or "deactivated" or "suspended" or "takendown" or "desynchronized" or "throttled" => status,
+            _ => "inactive"
+        });
+    }
 
     internal async Task<IReadOnlyDictionary<Did, Handle?>> GetAsync(
         IReadOnlyList<ActorRefreshRequest> actors, CancellationToken cancellationToken)

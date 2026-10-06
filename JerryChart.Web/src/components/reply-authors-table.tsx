@@ -34,7 +34,7 @@ export function ReplyAuthorsTable({ authors, label, clickable = false, highlight
             <TableHead scope="row" className="whitespace-normal break-words">
               <ProfileHoverCard author={author} clickable={clickable} />
               {author.handle === null && (
-                <span className="mt-1 block text-xs font-normal text-muted-foreground">Handle unavailable</span>
+                <span className="mt-1 block text-xs font-normal text-muted-foreground">{author.did}</span>
               )}
             </TableHead>
             <TableCell className="text-right tabular-nums">{author.replyCount.toLocaleString("en-US")}</TableCell>

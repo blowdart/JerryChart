@@ -50,8 +50,8 @@ updates:
 
   - package-ecosystem: npm
     directories:
-      - "/jerrychart-web"
-      - "/jerrychart-web/tooling/lint"
+      - "/JerryChart.Web"
+      - "/JerryChart.Web/tooling/lint"
     schedule:
       interval: daily
     open-pull-requests-limit: 10

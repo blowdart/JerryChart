@@ -42,7 +42,7 @@ internal sealed class MonitorStore(MySqlConnection connection)
             ON DUPLICATE KEY UPDATE Did = Actor.Did;
 
             INSERT INTO ActorRefresh (Did)
-            SELECT Did FROM Actor
+            SELECT Did FROM Actor WHERE NOT EXISTS (SELECT 1 FROM ExcludedActor e WHERE e.Did = Actor.Did)
             ON DUPLICATE KEY UPDATE Did = ActorRefresh.Did;
 
             INSERT INTO MonitorSchemaMigration (MigrationId, AppliedAt)
@@ -92,9 +92,22 @@ internal sealed class MonitorStore(MySqlConnection connection)
         command.ExecuteNonQuery();
     }
 
-    internal async Task SaveHitAsync(Hit hit, CancellationToken cancellationToken)
+    internal async Task<bool> SaveHitAsync(Hit hit, CancellationToken cancellationToken)
     {
         await using MySqlTransaction transaction = await connection.BeginTransactionAsync(cancellationToken);
+        await ActorExclusionStore.LockAsync(connection, transaction, cancellationToken);
+        await using (MySqlCommand exclusion = connection.CreateCommand())
+        {
+            exclusion.Transaction = transaction;
+            exclusion.CommandText = "SELECT EXISTS (SELECT 1 FROM ExcludedActor WHERE Did IN (@author, @parent))";
+            exclusion.Parameters.AddWithValue("@author", hit.AuthorDid.ToString());
+            exclusion.Parameters.AddWithValue("@parent", hit.ParentAuthorDid.ToString());
+            if (Convert.ToInt32(await exclusion.ExecuteScalarAsync(cancellationToken)) == 1)
+            {
+                await transaction.CommitAsync(cancellationToken);
+                return false;
+            }
+        }
         await using MySqlCommand command = connection.CreateCommand();
         command.Transaction = transaction;
         command.CommandText = """
@@ -129,5 +142,7 @@ internal sealed class MonitorStore(MySqlConnection connection)
 
         await command.ExecuteNonQueryAsync(cancellationToken);
         await transaction.CommitAsync(cancellationToken);
+
+        return true;
     }
 }

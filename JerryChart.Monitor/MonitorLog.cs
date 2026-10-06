@@ -2,7 +2,6 @@
 // Licensed under the MIT License.
 
 using idunno.AtProto;
-using idunno.AtProto.Jetstream;
 
 using Microsoft.Extensions.Logging;
 
@@ -22,14 +21,8 @@ internal static partial class MonitorLog
     [LoggerMessage(4, LogLevel.Information, "Starting Jerry no replay. Resuming saved progress: {HasProgress}.")]
     internal static partial void StartingReplay(ILogger logger, bool hasProgress);
 
-    [LoggerMessage(5, LogLevel.Debug, "Processing archive Jetstream event {Sequence} ({Kind}).")]
-    internal static partial void ProcessingArchiveEvent(ILogger logger, long? sequence, JetStreamEventKind kind);
-
     [LoggerMessage(6, LogLevel.Information, "Listening to live Jetstream after sequence {Sequence}.")]
     internal static partial void ListeningToLive(ILogger logger, long? sequence);
-
-    [LoggerMessage(7, LogLevel.Debug, "Processing live Jetstream event {Sequence} ({Kind}).")]
-    internal static partial void ProcessingLiveEvent(ILogger logger, long sequence, JetStreamEventKind kind);
 
     [LoggerMessage(8, LogLevel.Warning, "Skipping invalid archive record {Sequence}. This record is omitted from monitoring statistics.")]
     internal static partial void SkippingArchiveRecord(ILogger logger, Exception exception, long sequence);
@@ -106,4 +99,15 @@ internal static partial class MonitorLog
     [LoggerMessage(32, LogLevel.Information, "Parent-URI backfill scheduled daily at 03:00 UTC. No immediate startup invocation.")]
     internal static partial void ParentUriBackfillScheduleRegistered(ILogger logger);
 
+    [LoggerMessage(34, LogLevel.Information, "Actor {Did} has no resolved handle; relay status {AccountStatus}. Rechecking in {RefreshSeconds} seconds.")]
+    internal static partial void ActorInactive(ILogger logger, Did did, string accountStatus, int refreshSeconds);
+
+    [LoggerMessage(35, LogLevel.Information, "Excluded actor {Did}. Deleted {DeletedHits} replies and removed its identity refresh data. Future ingestion is blocked.")]
+    internal static partial void ActorExcluded(ILogger logger, Did did, long deletedHits);
+
+    [LoggerMessage(36, LogLevel.Error, "Could not exclude actor {Did}. Privacy deletion must not be assumed complete.")]
+    internal static partial void ExclusionFailed(ILogger logger, Exception exception, Did did);
+
+    [LoggerMessage(37, LogLevel.Warning, "Exclusion of actor {Did} was canceled. Verify exclusion state before assuming deletion completed.")]
+    internal static partial void ExclusionCanceled(ILogger logger, Did did);
 }

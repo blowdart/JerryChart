@@ -4,11 +4,11 @@ import Image from "next/image";
 import { PreviewCard } from "@base-ui/react/preview-card";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { getBlueskyProfile, profileAvatarUrl, type BlueskyProfile } from "@/lib/bluesky-profile";
-import type { TopReplyAuthor } from "@/lib/reply-authors";
+import { authorLabel, type TopReplyAuthor } from "@/lib/reply-authors";
 import { ProfileText } from "@/components/profile-text";
 
 export function ProfileHoverCard({ author, clickable = false, children, className }: {
-  author: Pick<TopReplyAuthor, "did" | "handle">;
+  author: Pick<TopReplyAuthor, "did" | "handle" | "accountStatus">;
   clickable?: boolean;
   children?: ReactNode;
   className?: string;
@@ -23,7 +23,7 @@ export function ProfileHoverCard({ author, clickable = false, children, classNam
   const [attempt, setAttempt] = useState(0);
 
   useEffect(() => {
-    if (!open) return;
+    if (!open || author.handle === null) return;
     let active = true;
     void getBlueskyProfile(author.did).then(
       (result) => { if (active) setProfile(result); },
@@ -33,9 +33,13 @@ export function ProfileHoverCard({ author, clickable = false, children, classNam
       },
     );
     return () => { active = false; };
-  }, [open, author.did, attempt]);
+  }, [open, author.did, author.handle, attempt]);
 
   const avatar = profileAvatarUrl(profile?.avatar);
+  // Status labels are not handles: avoid @ prefixes, dead profile links, and futile hover requests.
+  if (author.handle === null) {
+    return <span title={author.did} className={className}>{children ?? authorLabel(author)}</span>;
+  }
   return (
     <PreviewCard.Root
       open={open}
@@ -53,7 +57,7 @@ export function ProfileHoverCard({ author, clickable = false, children, classNam
         href={`https://bsky.app/profile/${author.did}`}
         className={`${clickable ? "relative z-20 " : ""}${className ?? "underline underline-offset-4"}`}
       >
-        {children ?? (author.handle ? `@${author.handle}` : author.did)}
+        {children ?? authorLabel(author)}
       </PreviewCard.Trigger>
       <PreviewCard.Portal container={container}>
         <PreviewCard.Positioner positionMethod="fixed" collisionBoundary={[]} sideOffset={8} className="z-50 max-w-[var(--available-width)]">

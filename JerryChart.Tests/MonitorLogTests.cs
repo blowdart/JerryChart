@@ -2,7 +2,6 @@
 // Licensed under the MIT License.
 
 using idunno.AtProto;
-using idunno.AtProto.Jetstream;
 
 using JerryChart.Monitor;
 
@@ -32,15 +31,6 @@ public sealed class MonitorLogTests
             logger.Fields["{OriginalFormat}"]);
         Assert.AreEqual("Monitor attempt failed. Retrying from durable progress in 15 seconds.", logger.Message);
 
-        MonitorLog.ProcessingArchiveEvent(logger, 123, JetStreamEventKind.Commit);
-
-        Assert.AreEqual(LogLevel.Debug, logger.Level);
-        Assert.AreEqual(5, logger.EventId.Id);
-        Assert.IsNull(logger.Exception);
-        Assert.AreEqual(123L, logger.Fields["Sequence"]);
-        Assert.AreEqual(JetStreamEventKind.Commit, logger.Fields["Kind"]);
-        Assert.AreEqual("Processing archive Jetstream event 123 (Commit).", logger.Message);
-
         var atUri = new AtUri("at://did:plc:author/app.bsky.feed.post/post1");
         var authorDid = new Did("did:plc:author");
         var parentDid = new Did("did:plc:parent");
@@ -60,11 +50,11 @@ public sealed class MonitorLogTests
 
     /// <summary>Verifies disabled log levels do not invoke the logger.</summary>
     [TestMethod]
-    public void DisabledDebugDoesNotWriteLog()
+    public void DisabledLoggingDoesNotWriteLog()
     {
         var logger = new RecordingLogger { Enabled = false };
 
-        MonitorLog.ProcessingLiveEvent(logger, 456, JetStreamEventKind.Commit);
+        MonitorLog.ListeningToLive(logger, 456);
 
         Assert.AreEqual(0, logger.Writes);
     }

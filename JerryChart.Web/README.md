@@ -8,6 +8,20 @@ The frontend renders Jerry no summaries, top reply authors, and monthly reply
 charts through server components. `API_BASE_URL` is supplied by Aspire and never exposed to the
 browser. MySQL is accessible only through the .NET API.
 
+## Visual Studio
+
+`JerryChart.Web.esproj` represents the frontend in `JerryChart.sln`, automatically
+showing its source, tests, configuration, and assets. Install Visual Studio's
+JavaScript/TypeScript project-system support to open it. Generated output and
+dependency directories are excluded from the project view.
+
+The project is excluded from all solution build configurations and disables
+automatic npm installation and build scripts. Aspire still owns frontend
+installation/startup, and the dedicated frontend CI job still runs validation.
+Keep AppHost as the startup project when running the complete application.
+Starting the frontend project alone uses `npm run dev` and requires dependencies
+and `API_BASE_URL` to be configured first.
+
 ```powershell
 npm ci
 npm run lint

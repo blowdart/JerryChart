@@ -6,6 +6,7 @@ using System.Net;
 using System.Net.Http.Json;
 using System.Security.Cryptography;
 using System.Text;
+using System.Text.Json;
 using System.Text.RegularExpressions;
 using System.Threading.Channels;
 
@@ -17,13 +18,14 @@ using idunno.AtProto;
 using idunno.AtProto.Jetstream;
 using idunno.AtProto.Jetstream.Archive;
 
+using JerryChart.Api;
 using JerryChart.Data;
 using JerryChart.Monitor;
 
-using Microsoft.Extensions.Logging;
-using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 
 using MySqlConnector;
 
@@ -31,7 +33,7 @@ namespace JerryChart.Tests;
 
 /// <summary>Exercises the Aspire application against a real, isolated MySQL container.</summary>
 [TestClass]
-public sealed class ApplicationTests
+public sealed partial class ApplicationTests
 {
     /// <summary>Verifies monitor durability without starting or installing frontend dependencies.</summary>
     /// <returns>A task representing the database integration test.</returns>
@@ -40,64 +42,68 @@ public sealed class ApplicationTests
     public async Task MonitorStateAndHitsSurviveRestart()
     {
         using var timeout = new CancellationTokenSource(TimeSpan.FromMinutes(3));
-        var cancellationToken = timeout.Token;
-        var builder = await DistributedApplicationTestingBuilder.CreateAsync<Projects.JerryChart_AppHost>(
+        CancellationToken cancellationToken = timeout.Token;
+        IDistributedApplicationTestingBuilder builder = await DistributedApplicationTestingBuilder.CreateAsync<Projects.JerryChart_AppHost>(
             ["Parameters:jetstream-api-key=integration-test-unused",
                 "Parameters:mysql-password=integration-test-only-password"], cancellationToken);
-        var monitorEndpoint = builder.Resources.Single(resource => resource.Name == "monitor")
+        EndpointAnnotation monitorEndpoint = builder.Resources.Single(resource => resource.Name == "monitor")
             .Annotations.OfType<EndpointAnnotation>().Single(endpoint => endpoint.Name == "http");
         Assert.AreEqual(8081, monitorEndpoint.TargetPort);
         Assert.IsFalse(monitorEndpoint.IsExternal,
             "The monitor's container probe endpoint must not be advertised as an external public endpoint.");
-        var apiResource = builder.Resources.OfType<ProjectResource>().Single(resource => resource.Name == "api");
+        ProjectResource apiResource = builder.Resources.OfType<ProjectResource>().Single(resource => resource.Name == "api");
         builder.CreateResourceBuilder(apiResource)
             .WithEnvironment("ASPNETCORE_ENVIRONMENT", Environments.Production)
             .WithEnvironment("DOTNET_ENVIRONMENT", Environments.Production);
-        foreach (var resource in builder.Resources.Where(resource => resource.Name is "monitor" or "web" or "web-installer").ToArray())
+        foreach (IResource? resource in builder.Resources.Where(resource => resource.Name is "monitor" or "web" or "web-installer").ToArray())
         {
             builder.Resources.Remove(resource);
         }
 
-        var mysql = builder.Resources.OfType<MySqlServerResource>().Single();
-        foreach (var mount in mysql.Annotations.OfType<ContainerMountAnnotation>().ToArray())
+        MySqlServerResource mysql = builder.Resources.OfType<MySqlServerResource>().Single();
+        foreach (ContainerMountAnnotation? mount in mysql.Annotations.OfType<ContainerMountAnnotation>().ToArray())
         {
             mysql.Annotations.Remove(mount);
         }
 
-        await using var app = await builder.BuildAsync(cancellationToken);
+        await using DistributedApplication app = await builder.BuildAsync(cancellationToken);
         await app.StartAsync(cancellationToken);
         await app.ResourceNotifications.WaitForResourceHealthyAsync("api", cancellationToken);
-        using var api = app.CreateHttpClient("api", "http");
+        using HttpClient api = app.CreateHttpClient("api", "http");
         Assert.AreEqual("Healthy", await api.GetStringAsync("/alive", cancellationToken));
         Assert.AreEqual("Healthy", await api.GetStringAsync("/health", cancellationToken));
-        var emptySummary = await api.GetFromJsonAsync<ReplySummary>("/statistics/reply-summary", cancellationToken);
+        ReplySummary? emptySummary = await api.GetFromJsonAsync<ReplySummary>("/statistics/reply-summary", cancellationToken);
         Assert.AreEqual(new ReplySummary(0, 0, 0), emptySummary,
             "An empty database must be queryable before the monitor creates any hits.");
-        var emptyAuthors = await api.GetFromJsonAsync<TopReplyAuthor[]>(
+        TopReplyAuthor[]? emptyAuthors = await api.GetFromJsonAsync<TopReplyAuthor[]>(
             "/statistics/right-jerry/top-authors", cancellationToken);
         Assert.IsNotNull(emptyAuthors);
         Assert.IsEmpty(emptyAuthors);
-        using var emptyPostsResponse = await api.GetAsync("/statistics/right-jerry/top-posts", cancellationToken);
+        using HttpResponseMessage emptyPostsResponse = await api.GetAsync("/statistics/right-jerry/top-posts", cancellationToken);
         Assert.AreEqual(HttpStatusCode.OK, emptyPostsResponse.StatusCode);
         Assert.AreEqual("[]", await emptyPostsResponse.Content.ReadAsStringAsync(cancellationToken));
-        var emptyAllAuthors = await api.GetFromJsonAsync<TopReplyAuthor[]>(
+        TopReplyAuthor[]? emptyAllAuthors = await api.GetFromJsonAsync<TopReplyAuthor[]>(
             "/statistics/right-jerry/authors", cancellationToken);
         Assert.IsNotNull(emptyAllAuthors);
         Assert.IsEmpty(emptyAllAuthors);
-        var emptyMonths = await api.GetFromJsonAsync<MonthlyReplyCount[]>(
+        MonthlyReplyCount[]? emptyMonths = await api.GetFromJsonAsync<MonthlyReplyCount[]>(
             "/statistics/right-jerry/monthly-replies", cancellationToken);
         Assert.IsNotNull(emptyMonths);
-        Assert.AreEqual(6, emptyMonths.Length);
+        Assert.HasCount(6, emptyMonths);
         Assert.IsTrue(emptyMonths.All(month => month.ReplyCount == 0));
-        var emptyUpdate = await api.GetFromJsonAsync<StatisticsLastUpdated>("/statistics/last-updated", cancellationToken);
+        StatisticsLastUpdated? emptyUpdate = await api.GetFromJsonAsync<StatisticsLastUpdated>("/statistics/last-updated", cancellationToken);
         Assert.IsNotNull(emptyUpdate);
         Assert.IsNull(emptyUpdate.UpdatedAt);
-        var connectionString = await app.GetConnectionStringAsync("jerrychart", cancellationToken);
+        string? connectionString = await app.GetConnectionStringAsync("jerrychart", cancellationToken);
         Assert.IsNotNull(connectionString);
-        using (var statusResponse = await api.GetAsync("/statistics/processing-status", cancellationToken))
+        await using MySqlDataSource metricsSource = new MySqlDataSourceBuilder(connectionString).Build();
+        var freshnessSampler = new CheckpointFreshnessSampler(metricsSource, TimeProvider.System,
+            NullLogger<CheckpointFreshnessSampler>.Instance);
+        Assert.IsNull(await freshnessSampler.ReadCheckpointAsync(cancellationToken));
+        using (HttpResponseMessage statusResponse = await api.GetAsync("/statistics/processing-status", cancellationToken))
         {
             Assert.IsTrue(statusResponse.Headers.CacheControl?.NoStore);
-            var status = await statusResponse.Content.ReadFromJsonAsync<ProcessingStatus>(cancellationToken);
+            ProcessingStatus? status = await statusResponse.Content.ReadFromJsonAsync<ProcessingStatus>(cancellationToken);
             Assert.IsNotNull(status);
             Assert.AreEqual("not-started", status.Monitor.Activity.State);
             Assert.AreEqual("not-started", status.ParentUriBackfill.Activity.State);
@@ -114,15 +120,19 @@ public sealed class ApplicationTests
         await VerifyScheduledBackfillAsync(connectionString, cancellationToken);
         await VerifyActorUpdaterStartupAsync(connectionString, cancellationToken);
         await VerifyMonitorStorageAsync(connectionString, cancellationToken);
+        await VerifyActorExclusionsAsync(connectionString, cancellationToken);
+        DateTimeOffset? checkpoint = await freshnessSampler.ReadCheckpointAsync(cancellationToken);
+        Assert.IsNotNull(checkpoint);
+        Assert.AreEqual(TimeSpan.Zero, checkpoint.Value.Offset);
         await VerifyParentUriBackfillAsync(connectionString, cancellationToken);
         await VerifyReplySummaryAsync(api, connectionString, cancellationToken);
         await VerifyTopReplyAuthorsAsync(api, connectionString, cancellationToken);
         await VerifyMonthlyRepliesAsync(api, connectionString, cancellationToken);
         await VerifyTopReplyPostsAsync(api, connectionString, cancellationToken);
         await VerifyStatisticsTimestampAsync(connectionString, cancellationToken);
-        using var updatedResponse = await api.GetAsync("/statistics/last-updated", cancellationToken);
+        using HttpResponseMessage updatedResponse = await api.GetAsync("/statistics/last-updated", cancellationToken);
         Assert.AreEqual(HttpStatusCode.OK, updatedResponse.StatusCode);
-        var updated = await updatedResponse.Content.ReadFromJsonAsync<StatisticsLastUpdated>(cancellationToken);
+        StatisticsLastUpdated? updated = await updatedResponse.Content.ReadFromJsonAsync<StatisticsLastUpdated>(cancellationToken);
         Assert.IsNotNull(updated?.UpdatedAt);
         Assert.AreEqual(TimeSpan.Zero, updated.UpdatedAt.Value.Offset);
         using var updatedJson = System.Text.Json.JsonDocument.Parse(
@@ -138,30 +148,30 @@ public sealed class ApplicationTests
     public async Task ApplicationDisplaysStatisticsThroughMySql()
     {
         using var timeout = new CancellationTokenSource(TimeSpan.FromMinutes(5));
-        var cancellationToken = timeout.Token;
-        var builder = await DistributedApplicationTestingBuilder
+        CancellationToken cancellationToken = timeout.Token;
+        IDistributedApplicationTestingBuilder builder = await DistributedApplicationTestingBuilder
             .CreateAsync<Projects.JerryChart_AppHost>(
                 ["Parameters:jetstream-api-key=integration-test-unused",
                     "Parameters:mysql-password=integration-test-only-password"], cancellationToken);
         builder.Resources.Remove(builder.Resources.Single(resource => resource.Name == "monitor"));
 
-        var mysql = builder.Resources.OfType<MySqlServerResource>().Single();
-        foreach (var mount in mysql.Annotations.OfType<ContainerMountAnnotation>().ToArray())
+        MySqlServerResource mysql = builder.Resources.OfType<MySqlServerResource>().Single();
+        foreach (ContainerMountAnnotation? mount in mysql.Annotations.OfType<ContainerMountAnnotation>().ToArray())
         {
             mysql.Annotations.Remove(mount);
         }
 
-        await using var app = await builder.BuildAsync(cancellationToken);
+        await using DistributedApplication app = await builder.BuildAsync(cancellationToken);
         await app.StartAsync(cancellationToken);
         await app.ResourceNotifications.WaitForResourceHealthyAsync("api", cancellationToken);
-        using var api = app.CreateHttpClient("api", "http");
-        var connectionString = await app.GetConnectionStringAsync("jerrychart", cancellationToken);
+        using HttpClient api = app.CreateHttpClient("api", "http");
+        string? connectionString = await app.GetConnectionStringAsync("jerrychart", cancellationToken);
         Assert.IsNotNull(connectionString);
 
         await app.ResourceNotifications.WaitForResourceAsync("web", KnownResourceStates.Running, cancellationToken);
-        using var web = app.CreateHttpClient("web", "http");
+        using HttpClient web = app.CreateHttpClient("web", "http");
         web.Timeout = TimeSpan.FromMinutes(2);
-        var html = await web.GetStringAsync("/", cancellationToken);
+        string html = await web.GetStringAsync("/", cancellationToken);
         Assert.Contains("Jerry No", html);
         Assert.Contains("Statistics on Bluesky's collective failure to make Jerry Chen reconsider his choices",
             WebUtility.HtmlDecode(html));
@@ -171,20 +181,21 @@ public sealed class ApplicationTests
 
         await VerifyMonitorStorageAsync(connectionString, cancellationToken);
         await VerifyReplySummaryAsync(api, connectionString, cancellationToken);
-        var summaryHtml = await web.GetStringAsync("/", cancellationToken);
+        string summaryHtml = await web.GetStringAsync("/", cancellationToken);
         Assert.Contains("Jerry no reply summary", summaryHtml);
         Assert.Contains("Total Jerry no replies", summaryHtml);
         Assert.Contains("\u2937 the right Jerry", WebUtility.HtmlDecode(summaryHtml));
         Assert.Contains("\u2937 the wrong Jerry", WebUtility.HtmlDecode(summaryHtml));
-        Assert.IsTrue(Regex.IsMatch(summaryHtml, @"Total Jerry no replies</th><td[^>]*>5</td>"));
-        Assert.IsTrue(Regex.IsMatch(WebUtility.HtmlDecode(summaryHtml), "\u2937 the right Jerry</th><td[^>]*>2</td>"));
-        Assert.IsTrue(Regex.IsMatch(WebUtility.HtmlDecode(summaryHtml), "\u2937 the wrong Jerry</th><td[^>]*>3</td>"));
+        Assert.IsTrue(TotalRepliesRegex().IsMatch(summaryHtml));
+        Assert.IsTrue(RightJerryRepliesRegex().IsMatch(WebUtility.HtmlDecode(summaryHtml)));
+        Assert.IsTrue(WrongJerryRepliesRegex().IsMatch(WebUtility.HtmlDecode(summaryHtml)));
         await VerifyTopReplyAuthorsAsync(api, connectionString, cancellationToken);
-        var rankedHtml = await web.GetStringAsync("/", cancellationToken);
+        string rankedHtml = await web.GetStringAsync("/", cancellationToken);
         Assert.Contains("Top 10 users telling Jerry \"No\"", WebUtility.HtmlDecode(rankedHtml));
         Assert.Contains("@renamed.example", rankedHtml);
         Assert.Contains("did:plc:rank01", rankedHtml);
-        Assert.Contains("Handle unavailable", rankedHtml);
+        Assert.Contains("Suspended", rankedHtml);
+        Assert.Contains("Unresolved", rankedHtml);
     }
 
     private static async Task VerifyProcessingStatusAsync(string connectionString, CancellationToken cancellationToken)
@@ -193,7 +204,7 @@ public sealed class ApplicationTests
         await using (var admin = new MySqlConnection(options.ConnectionString))
         {
             await admin.OpenAsync(cancellationToken);
-            await using var command = admin.CreateCommand();
+            await using MySqlCommand command = admin.CreateCommand();
             command.CommandText = "CREATE DATABASE processing_status_test";
             await command.ExecuteNonQueryAsync(cancellationToken);
         }
@@ -201,7 +212,7 @@ public sealed class ApplicationTests
         options.Database = "processing_status_test";
         // Worker locks are non-pooled; heartbeats and API queries exercise separate pooled connections.
         var poolOptions = new MySqlConnectionStringBuilder(options.ConnectionString) { Pooling = true, UseAffectedRows = true };
-        await using var source = new MySqlDataSourceBuilder(poolOptions.ConnectionString).Build();
+        await using MySqlDataSource source = new MySqlDataSourceBuilder(poolOptions.ConnectionString).Build();
         var clock = new ProcessingTestClock();
         var statusStore = new ProcessingStatusStore(source, clock);
         var estimatedProgress = new MonitorProgress
@@ -250,7 +261,7 @@ public sealed class ApplicationTests
                 competitor.ServerThread, cancellationToken));
             Assert.AreEqual("live", (await statusStore.GetAsync(cancellationToken)).Monitor.Activity.State);
 
-            await using var command = owner.CreateCommand();
+            await using MySqlCommand command = owner.CreateCommand();
             command.CommandText = """
                     INSERT INTO Hits (AtUriHash, AtUri, CreatedAt, AuthorDid, ParentAuthorDid,
                         ParentUriBackfillStatus, ParentUriBackfillNextAttemptAt)
@@ -278,7 +289,7 @@ public sealed class ApplicationTests
             await VerifyIndependentHeartbeatAsync(source, backfillOwner, clock, cancellationToken);
             foreach (string outcome in new[] { "completed", "stopped", "failure" })
             {
-                await using var activity = await ProcessingActivity.StartAsync(source, NullLogger.Instance,
+                await using ProcessingActivity activity = await ProcessingActivity.StartAsync(source, NullLogger.Instance,
                     "parent-uri-backfill", "backfill-running", ":parent-uri-backfill", backfillOwner, clock,
                     cancellationToken);
                 Assert.AreEqual("backfill-running", (await statusStore.GetAsync(cancellationToken)).ParentUriBackfill.Activity.State);
@@ -339,8 +350,8 @@ public sealed class ApplicationTests
         Assert.AreEqual("stale", stale.State);
         Assert.AreEqual("live", stale.Phase);
         Assert.IsFalse(stale.IsRunning);
-        await using var read = await source.OpenConnectionAsync(cancellationToken);
-        await using var verify = read.CreateCommand();
+        await using MySqlConnection read = await source.OpenConnectionAsync(cancellationToken);
+        await using MySqlCommand verify = read.CreateCommand();
         verify.CommandText = "SELECT COUNT(*) FROM JetstreamReplayProgress";
         Assert.AreEqual(1L, Convert.ToInt64(await verify.ExecuteScalarAsync(cancellationToken)),
             "Status updates must not add replay cursors beyond the explicitly saved fixture.");
@@ -368,11 +379,11 @@ public sealed class ApplicationTests
     {
         var logger = new ProcessingFailureLogger();
         var statusStore = new ProcessingStatusStore(source, clock);
-        await using var activity = await ProcessingActivity.StartAsync(source, logger, "parent-uri-backfill",
+        await using ProcessingActivity activity = await ProcessingActivity.StartAsync(source, logger, "parent-uri-backfill",
             "backfill-running", ":parent-uri-backfill", owner, clock, cancellationToken);
         var work = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         Task execution = activity.ExecuteAsync(() => work.Task, "completed", cancellationToken);
-        await using var command = owner.CreateCommand();
+        await using MySqlCommand command = owner.CreateCommand();
         try
         {
             clock.Advance(TimeSpan.FromSeconds(15));
@@ -431,21 +442,21 @@ public sealed class ApplicationTests
         await using (var admin = new MySqlConnection(options.ConnectionString))
         {
             await admin.OpenAsync(cancellationToken);
-            await using var create = admin.CreateCommand();
+            await using MySqlCommand create = admin.CreateCommand();
             create.CommandText = "CREATE DATABASE scheduled_backfill_test";
             await create.ExecuteNonQueryAsync(cancellationToken);
         }
 
         options.Database = "scheduled_backfill_test";
-        await using var source = new MySqlDataSourceBuilder(options.ConnectionString).Build();
-        await using var connection = await source.OpenConnectionAsync(cancellationToken);
+        await using MySqlDataSource source = new MySqlDataSourceBuilder(options.ConnectionString).Build();
+        await using MySqlConnection connection = await source.OpenConnectionAsync(cancellationToken);
         await MonitorSchema.InitializeAsync(connection, cancellationToken);
         var statusStore = new ProcessingStatusStore(source, TimeProvider.System);
         var log = new ScheduledBackfillLogger();
         var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var clients = new List<ScheduledBackfillHandler>();
         bool fail = false;
-        var builder = Host.CreateApplicationBuilder();
+        HostApplicationBuilder builder = Host.CreateApplicationBuilder();
         builder.Logging.ClearProviders();
         builder.Logging.AddProvider(log);
         builder.Services.AddSingleton(source);
@@ -467,8 +478,8 @@ public sealed class ApplicationTests
             return new HttpClient(handler);
         });
         builder.Services.AddParentUriBackfillScheduler();
-        using var host = builder.Build();
-        var scheduler = host.Services.GetRequiredService<ScheduledParentUriBackfill>();
+        using IHost host = builder.Build();
+        ScheduledParentUriBackfill scheduler = host.Services.GetRequiredService<ScheduledParentUriBackfill>();
         await scheduler.InvokeAsync(cancellationToken);
         Assert.AreEqual("completed", (await statusStore.GetAsync(cancellationToken)).ParentUriBackfill.Activity.State);
         Assert.AreEqual(0, clients[0].Calls, "An empty scheduled queue must not access the public AppView.");
@@ -478,7 +489,7 @@ public sealed class ApplicationTests
         {
             await manualOwner.OpenAsync(cancellationToken);
             await new ParentUriBackfillStore(manualOwner).InitializeAsync(cancellationToken);
-            await using var manual = await ProcessingActivity.StartAsync(source, NullLogger.Instance,
+            await using ProcessingActivity manual = await ProcessingActivity.StartAsync(source, NullLogger.Instance,
                 "parent-uri-backfill", "backfill-running", ":parent-uri-backfill", manualOwner,
                 TimeProvider.System, cancellationToken);
             WorkerActivity before = (await statusStore.GetAsync(cancellationToken)).ParentUriBackfill.Activity;
@@ -493,7 +504,7 @@ public sealed class ApplicationTests
             await manual.FinishAsync("stopped");
         }
 
-        await using var command = connection.CreateCommand();
+        await using MySqlCommand command = connection.CreateCommand();
         command.CommandText = """
                     INSERT INTO Hits (AtUriHash, AtUri, CreatedAt, AuthorDid, ParentAuthorDid)
                     VALUES (UNHEX(SHA2('scheduled', 256)), 'at://did:plc:reply/app.bsky.feed.post/scheduled',
@@ -507,7 +518,7 @@ public sealed class ApplicationTests
             Assert.AreEqual("backfill-running", (await statusStore.GetAsync(cancellationToken)).ParentUriBackfill.Activity.State);
             int allocated = clients.Count;
             await scheduler.InvokeAsync(cancellationToken);
-            Assert.AreEqual(allocated, clients.Count, "The background service must suppress overlapping invocations.");
+            Assert.HasCount(allocated, clients, "The background service must suppress overlapping invocations.");
             await Assert.ThrowsAsync<InvalidOperationException>(() =>
                 host.Services.GetRequiredService<ParentUriBackfillInvocation>().RunAsync(false, cancellationToken));
         }
@@ -527,9 +538,9 @@ public sealed class ApplicationTests
         }
 
         // A later invocation still uses the same entrypoint and reports known failures without killing scheduling.
-        using var freshHost = Host.CreateApplicationBuilder().Build();
+        using IHost freshHost = Host.CreateApplicationBuilder().Build();
         fail = true;
-        var invocation = host.Services.GetRequiredService<ParentUriBackfillInvocation>();
+        ParentUriBackfillInvocation invocation = host.Services.GetRequiredService<ParentUriBackfillInvocation>();
         var next = new ScheduledParentUriBackfill(invocation,
             freshHost.Services.GetRequiredService<IHostApplicationLifetime>(), log, TimeProvider.System);
         await next.InvokeAsync(cancellationToken);
@@ -619,16 +630,16 @@ public sealed class ApplicationTests
         await using (var admin = new MySqlConnection(options.ConnectionString))
         {
             await admin.OpenAsync(cancellationToken);
-            await using var command = admin.CreateCommand();
+            await using MySqlCommand command = admin.CreateCommand();
             command.CommandText = "CREATE DATABASE statistics_timestamp_test";
             await command.ExecuteNonQueryAsync(cancellationToken);
         }
 
         options.Database = "statistics_timestamp_test";
-        await using var source = new MySqlDataSourceBuilder(options.ConnectionString).Build();
+        await using MySqlDataSource source = new MySqlDataSourceBuilder(options.ConnectionString).Build();
         var statistics = new StatisticsStore(source, TimeProvider.System);
         DateTimeOffset? persisted;
-        await using (var connection = await source.OpenConnectionAsync(cancellationToken))
+        await using (MySqlConnection connection = await source.OpenConnectionAsync(cancellationToken))
         {
             var monitor = new MonitorStore(connection);
             await monitor.InitializeAsync(cancellationToken);
@@ -637,12 +648,12 @@ public sealed class ApplicationTests
                 new AtUri("at://did:plc:timestamp/app.bsky.feed.post/first"), new Did("did:plc:timestamp"),
                 StatisticsStore.RightJerryDid, ParentPost(StatisticsStore.RightJerryDid, "timestamp-parent"));
             await monitor.SaveHitAsync(hit, cancellationToken);
-            var first = (await statistics.GetLastUpdatedAsync(cancellationToken)).UpdatedAt;
+            DateTimeOffset? first = (await statistics.GetLastUpdatedAsync(cancellationToken)).UpdatedAt;
             Assert.IsNotNull(first);
-            Assert.IsTrue(Math.Abs((DateTimeOffset.UtcNow - first.Value).TotalMinutes) < 1);
+            Assert.IsLessThan(1, Math.Abs((DateTimeOffset.UtcNow - first.Value).TotalMinutes));
             Assert.AreEqual(TimeSpan.Zero, first.Value.Offset);
 
-            await using var command = connection.CreateCommand();
+            await using MySqlCommand command = connection.CreateCommand();
             // Simulate upgrading a database with hits but no recorded ingestion time.
             command.CommandText = "DELETE FROM StatisticsUpdate";
             await command.ExecuteNonQueryAsync(cancellationToken);
@@ -679,7 +690,7 @@ public sealed class ApplicationTests
             Assert.AreEqual(persisted, (await statistics.GetLastUpdatedAsync(cancellationToken)).UpdatedAt);
         }
 
-        await using var restarted = await source.OpenConnectionAsync(cancellationToken);
+        await using MySqlConnection restarted = await source.OpenConnectionAsync(cancellationToken);
         await new MonitorStore(restarted).InitializeAsync(cancellationToken);
         Assert.AreEqual(persisted, (await statistics.GetLastUpdatedAsync(cancellationToken)).UpdatedAt,
             "Restart must retain the persisted statistics timestamp.");
@@ -692,7 +703,7 @@ public sealed class ApplicationTests
         await using (var admin = new MySqlConnection(options.ConnectionString))
         {
             await admin.OpenAsync(cancellationToken);
-            await using var command = admin.CreateCommand();
+            await using MySqlCommand command = admin.CreateCommand();
             command.CommandText = "CREATE DATABASE actor_updater_startup";
             await command.ExecuteNonQueryAsync(cancellationToken);
         }
@@ -700,13 +711,13 @@ public sealed class ApplicationTests
         options.Database = "actor_updater_startup";
         await using var connection = new MySqlConnection(options.ConnectionString);
         await connection.OpenAsync(cancellationToken);
-        await using (var command = connection.CreateCommand())
+        await using (MySqlCommand command = connection.CreateCommand())
         {
             command.CommandText = "CREATE TABLE notes (id INT PRIMARY KEY); INSERT INTO notes VALUES (1)";
             await command.ExecuteNonQueryAsync(cancellationToken);
         }
-        var store = await ActorHandleUpdater.InitializeStoreAsync(connection, cancellationToken);
-        await using (var command = connection.CreateCommand())
+        ActorStore store = await ActorHandleUpdater.InitializeStoreAsync(connection, cancellationToken);
+        await using (MySqlCommand command = connection.CreateCommand())
         {
             command.CommandText = """
                 SELECT COUNT(*) FROM INFORMATION_SCHEMA.TABLES
@@ -716,8 +727,24 @@ public sealed class ApplicationTests
         }
         Assert.IsEmpty(await store.GetDueAsync(cancellationToken),
             "The updater must be able to start against a fresh database before either the API or replay loop.");
+        await using (MySqlCommand command = connection.CreateCommand())
+        {
+            command.CommandText = """
+                ALTER TABLE Actor DROP COLUMN AccountStatus;
+                INSERT INTO Actor (Did, Handle) VALUES ('did:plc:existing', 'existing.example')
+                """;
+            await command.ExecuteNonQueryAsync(cancellationToken);
+        }
         store = await ActorHandleUpdater.InitializeStoreAsync(connection, cancellationToken);
         Assert.IsEmpty(await store.GetDueAsync(cancellationToken), "Schema initialization must remain idempotent.");
+        await using (MySqlCommand command = connection.CreateCommand())
+        {
+            command.CommandText = "SELECT Handle, AccountStatus FROM Actor WHERE Did = 'did:plc:existing'";
+            await using MySqlDataReader reader = await command.ExecuteReaderAsync(cancellationToken);
+            Assert.IsTrue(await reader.ReadAsync(cancellationToken));
+            Assert.AreEqual("existing.example", reader.GetString(0));
+            Assert.IsTrue(reader.IsDBNull(1), "Migration must preserve handles and leave status unknown.");
+        }
         await using var competitor = new MySqlConnection(options.ConnectionString);
         await competitor.OpenAsync(cancellationToken);
         await Assert.ThrowsAsync<InvalidOperationException>(
@@ -732,7 +759,7 @@ public sealed class ApplicationTests
         await using (var admin = new MySqlConnection(options.ConnectionString))
         {
             await admin.OpenAsync(cancellationToken);
-            await using var command = admin.CreateCommand();
+            await using MySqlCommand command = admin.CreateCommand();
             command.CommandText = "CREATE DATABASE parent_uri_backfill_test";
             await command.ExecuteNonQueryAsync(cancellationToken);
         }
@@ -744,7 +771,7 @@ public sealed class ApplicationTests
         const string expectedParent = "at://did:plc:parent/app.bsky.feed.post/parent";
         await using var connection = new MySqlConnection(options.ConnectionString);
         await connection.OpenAsync(cancellationToken);
-        await using (var command = connection.CreateCommand())
+        await using (MySqlCommand command = connection.CreateCommand())
         {
             command.CommandText = """
                 CREATE TABLE Hits (
@@ -780,7 +807,7 @@ public sealed class ApplicationTests
         await MonitorSchema.InitializeAsync(connection, cancellationToken);
         await MonitorSchema.InitializeAsync(connection, cancellationToken);
         await VerifyBackfillStoreAsync(options.ConnectionString, cancellationToken);
-        await using (var command = connection.CreateCommand())
+        await using (MySqlCommand command = connection.CreateCommand())
         {
             command.CommandText = """
                 SELECT COUNT(*) FROM Hits
@@ -790,9 +817,9 @@ public sealed class ApplicationTests
                 "An existing Hits table must migrate to clearly unattempted rows.");
         }
 
-        await using var dataSource = new MySqlDataSourceBuilder(options.ConnectionString).Build();
+        await using MySqlDataSource dataSource = new MySqlDataSourceBuilder(options.ConnectionString).Build();
         var processing = new ProcessingStatusStore(dataSource, TimeProvider.System);
-        var firstCalls = 0;
+        int firstCalls = 0;
         using (var firstHttp = new HttpClient(new StubHandler(_ =>
         {
             firstCalls++;
@@ -815,7 +842,7 @@ public sealed class ApplicationTests
 
         Assert.AreEqual(1, firstCalls);
         Assert.AreEqual("stopped", (await processing.GetAsync(cancellationToken)).ParentUriBackfill.Activity.State);
-        await using (var command = connection.CreateCommand())
+        await using (MySqlCommand command = connection.CreateCommand())
         {
             command.CommandText = """
                 SELECT ParentUriBackfillStatus, ParentUriBackfillAttemptCount,
@@ -823,7 +850,7 @@ public sealed class ApplicationTests
                 FROM Hits WHERE AtUri = @uri
                 """;
             command.Parameters.AddWithValue("@uri", retryHit);
-            await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+            await using MySqlDataReader reader = await command.ExecuteReaderAsync(cancellationToken);
             Assert.IsTrue(await reader.ReadAsync(cancellationToken));
             Assert.AreEqual((byte)ParentUriBackfillStatus.RetryPending, reader.GetByte(0));
             Assert.AreEqual(1, reader.GetInt32(1));
@@ -846,14 +873,14 @@ public sealed class ApplicationTests
         Assert.AreEqual(0L, completed.Pending + completed.RetryPending);
         Assert.AreEqual(2L, completed.Resolved);
         Assert.AreEqual(1L, completed.Unavailable);
-        await using (var command = connection.CreateCommand())
+        await using (MySqlCommand command = connection.CreateCommand())
         {
             command.CommandText = """
                 SELECT AtUri, ParentAtUri, ParentAtUriHash, ParentUriBackfillStatus,
                     ParentUriBackfillAttemptCount
                 FROM Hits ORDER BY AtUri
                 """;
-            await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+            await using MySqlDataReader reader = await command.ExecuteReaderAsync(cancellationToken);
             var rows = new Dictionary<string, (string? ParentUri, byte Status, int Attempts)>(StringComparer.Ordinal);
             while (await reader.ReadAsync(cancellationToken))
             {
@@ -862,8 +889,7 @@ public sealed class ApplicationTests
                 if (uri == availableHit || uri == retryHit)
                 {
                     Assert.AreEqual(expectedParent, parentUri);
-                    CollectionAssert.AreEqual(SHA256.HashData(Encoding.UTF8.GetBytes(expectedParent)),
-                        (byte[])reader.GetValue(2));
+                    Assert.AreSequenceEqual(SHA256.HashData(Encoding.UTF8.GetBytes(expectedParent)), (byte[])reader.GetValue(2));
                     Assert.AreEqual((byte)ParentUriBackfillStatus.Resolved, reader.GetByte(3));
                     Assert.AreEqual(0, reader.GetInt32(4));
                 }
@@ -878,10 +904,10 @@ public sealed class ApplicationTests
                 rows.Add(uri, (parentUri, reader.GetByte(3), reader.GetInt32(4)));
             }
 
-            Assert.AreEqual(3, rows.Count);
+            Assert.HasCount(3, rows);
         }
 
-        var unexpectedRequests = 0;
+        int unexpectedRequests = 0;
         using var noRetryHttp = new HttpClient(new StubHandler(_ =>
         {
             unexpectedRequests++;
@@ -893,7 +919,7 @@ public sealed class ApplicationTests
             "Resolved and unavailable hits must not be fetched on a later backfill invocation.");
 
         const string rateLimitedHit = "at://did:plc:reply/app.bsky.feed.post/rate-limited";
-        await using (var command = connection.CreateCommand())
+        await using (MySqlCommand command = connection.CreateCommand())
         {
             command.CommandText = """
                 INSERT INTO Hits (AtUriHash, AtUri, CreatedAt, AuthorDid, ParentAuthorDid)
@@ -923,7 +949,7 @@ public sealed class ApplicationTests
         }
 
         Assert.AreEqual("stopped", (await processing.GetAsync(cancellationToken)).ParentUriBackfill.Activity.State);
-        await using (var command = connection.CreateCommand())
+        await using (MySqlCommand command = connection.CreateCommand())
         {
             command.CommandText = """
                 SELECT ParentUriBackfillStatus, ParentUriBackfillAttemptCount,
@@ -931,7 +957,7 @@ public sealed class ApplicationTests
                 FROM Hits WHERE AtUri = @uri
                 """;
             command.Parameters.AddWithValue("@uri", rateLimitedHit);
-            await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+            await using MySqlDataReader reader = await command.ExecuteReaderAsync(cancellationToken);
             Assert.IsTrue(await reader.ReadAsync(cancellationToken));
             Assert.AreEqual((byte)ParentUriBackfillStatus.RetryPending, reader.GetByte(0));
             Assert.AreEqual(1, reader.GetInt32(1));
@@ -939,7 +965,7 @@ public sealed class ApplicationTests
                 "A Retry-After cooldown must survive restarting the one-off command.");
         }
 
-        await using (var command = connection.CreateCommand())
+        await using (MySqlCommand command = connection.CreateCommand())
         {
             command.CommandText = """
                 UPDATE Hits SET ParentUriBackfillNextAttemptAt = UTC_TIMESTAMP(6)
@@ -956,7 +982,7 @@ public sealed class ApplicationTests
         }
         Assert.AreEqual("failure", (await processing.GetAsync(cancellationToken)).ParentUriBackfill.Activity.State);
 
-        await using var cursor = connection.CreateCommand();
+        await using MySqlCommand cursor = connection.CreateCommand();
         cursor.CommandText = "SELECT COUNT(*) FROM JetstreamReplayProgress";
         Assert.AreEqual(0L, Convert.ToInt64(await cursor.ExecuteScalarAsync(cancellationToken)),
             "The explicit backfill must not create or modify Jetstream replay cursors.");
@@ -992,13 +1018,13 @@ public sealed class ApplicationTests
             var store = new ParentUriBackfillStore(connection);
             await store.InitializeAsync(cancellationToken);
             IReadOnlyList<ParentUriBackfillRequest> due = await store.GetDueBatchAsync(cancellationToken);
-            Assert.AreEqual(3, due.Count);
+            Assert.HasCount(3, due);
             Assert.IsNull(await store.GetNextRetryAtAsync(cancellationToken));
             var missing = new ParentUriBackfillRequest(
                 new AtUri("at://did:plc:missing/app.bsky.feed.post/missing"), new Did("did:plc:parent"), 0);
             await Assert.ThrowsAsync<InvalidDataException>(() => store.SaveResultsAsync(
                 [new(due[0], null), new(missing, null)], cancellationToken));
-            Assert.AreEqual(3, (await store.GetDueBatchAsync(cancellationToken)).Count,
+            Assert.HasCount(3, await store.GetDueBatchAsync(cancellationToken),
                 "A failed result batch must roll back earlier updates.");
             await Assert.ThrowsAsync<InvalidDataException>(() =>
                 store.SaveRetryTimesAsync([due[0], missing], TimeSpan.Zero, cancellationToken));
@@ -1016,10 +1042,10 @@ public sealed class ApplicationTests
                 MySqlException failure = await Assert.ThrowsAsync<MySqlException>(() =>
                     BackfillDatabaseRetry.RunAsync(async (_, token) =>
                     {
-                        await using var command = connection.CreateCommand();
+                        await using MySqlCommand command = connection.CreateCommand();
                         command.CommandText = $"SIGNAL SQLSTATE '45000' SET MYSQL_ERRNO = {number}";
                         await command.ExecuteNonQueryAsync(token);
-                    }, NullLogger.Instance, cancellationToken, (_, _) =>
+                    }, NullLogger.Instance, cancellationToken: cancellationToken, wait: (_, _) =>
                     {
                         waits++;
                         return Task.CompletedTask;
@@ -1040,20 +1066,20 @@ public sealed class ApplicationTests
             await store.InitializeAsync(token);
             if (++attempts <= 2)
             {
-                await using var command = connection.CreateCommand();
+                await using MySqlCommand command = connection.CreateCommand();
                 command.CommandText = "SIGNAL SQLSTATE '40001' SET MYSQL_ERRNO = 1213";
                 await command.ExecuteNonQueryAsync(token);
             }
 
-            Assert.AreEqual(3, (await store.GetDueBatchAsync(token)).Count,
+            Assert.HasCount(3, await store.GetDueBatchAsync(token),
                 "Recovery must reacquire the session lock and resume the untouched durable queue.");
-        }, NullLogger.Instance, cancellationToken, (delay, _) =>
+        }, NullLogger.Instance, cancellationToken: cancellationToken, wait: (delay, _) =>
         {
             delays.Add(delay.TotalSeconds);
             return Task.CompletedTask;
         });
         Assert.AreEqual(3, attempts);
-        CollectionAssert.AreEqual(new double[] { 1, 5 }, delays);
+        Assert.AreSequenceEqual(new double[] { 1, 5 }, delays);
     }
 
     private static HttpResponseMessage Json(object body)
@@ -1083,17 +1109,17 @@ public sealed class ApplicationTests
     private static async Task VerifyMonthlyRepliesAsync(HttpClient api, string connectionString,
         CancellationToken cancellationToken)
     {
-        await using var dataSource = new MySqlDataSourceBuilder(connectionString).Build();
-        await using var connection = await dataSource.OpenConnectionAsync(cancellationToken);
+        await using MySqlDataSource dataSource = new MySqlDataSourceBuilder(connectionString).Build();
+        await using MySqlConnection connection = await dataSource.OpenConnectionAsync(cancellationToken);
         var monitor = new MonitorStore(connection);
         // The fixed window crosses a year boundary and includes leap-day February.
         var now = new DateTimeOffset(2024, 3, 15, 12, 0, 0, TimeSpan.Zero);
         var clock = new StatisticsClock(now);
         var store = new StatisticsStore(dataSource, clock);
-        var before = await store.GetMonthlyRightJerryRepliesAsync(cancellationToken);
+        IReadOnlyList<MonthlyReplyCount> before = await store.GetMonthlyRightJerryRepliesAsync(cancellationToken);
         Assert.IsTrue(before.All(month => month.ReplyCount == 0));
         Assert.IsEmpty(await store.GetAllTimeRightJerryRepliesAsync(cancellationToken));
-        var timestamps = new[]
+        DateTimeOffset[] timestamps = new[]
         {
             new DateTimeOffset(2023, 9, 30, 23, 59, 59, TimeSpan.Zero),
             new DateTimeOffset(2023, 10, 1, 0, 0, 0, TimeSpan.Zero),
@@ -1105,7 +1131,7 @@ public sealed class ApplicationTests
             now.AddSeconds(1),
             new DateTimeOffset(2024, 4, 1, 0, 0, 0, TimeSpan.Zero)
         };
-        for (var index = 0; index < timestamps.Length; index++)
+        for (int index = 0; index < timestamps.Length; index++)
         {
             var hit = new Hit(timestamps[index], new AtUri($"at://did:plc:monthly/app.bsky.feed.post/{index}"),
                 new Did("did:plc:monthly"), StatisticsStore.RightJerryDid,
@@ -1117,8 +1143,8 @@ public sealed class ApplicationTests
         await monitor.SaveHitAsync(new Hit(now, new AtUri("at://did:plc:monthly/app.bsky.feed.post/wrong"),
             new Did("did:plc:monthly"), new Did("did:plc:wrongjerry"),
             ParentPost("did:plc:wrongjerry", "monthly-wrong-parent")), cancellationToken);
-        var months = await store.GetMonthlyRightJerryRepliesAsync(cancellationToken);
-        CollectionAssert.AreEqual(new[]
+        IReadOnlyList<MonthlyReplyCount> months = await store.GetMonthlyRightJerryRepliesAsync(cancellationToken);
+        Assert.AreSequenceEqual(new[]
         {
             new MonthlyReplyCount(new DateOnly(2023, 10, 1), 1),
             new MonthlyReplyCount(new DateOnly(2023, 11, 1), 0),
@@ -1127,23 +1153,23 @@ public sealed class ApplicationTests
             new MonthlyReplyCount(new DateOnly(2024, 2, 1), 2),
             new MonthlyReplyCount(new DateOnly(2024, 3, 1), 1)
         }, months.ToArray());
-        var history = await store.GetAllTimeRightJerryRepliesAsync(cancellationToken);
-        Assert.AreEqual(7, history.Count);
+        IReadOnlyList<MonthlyReplyCount> history = await store.GetAllTimeRightJerryRepliesAsync(cancellationToken);
+        Assert.HasCount(7, history);
         Assert.AreEqual(new MonthlyReplyCount(new DateOnly(2023, 9, 1), 1), history[0]);
-        CollectionAssert.AreEqual(months.ToArray(), history.Skip(1).ToArray());
+        Assert.AreSequenceEqual(months.ToArray(), history.Skip(1).ToArray());
 
-        var recent = DateTimeOffset.UtcNow.AddDays(-1);
+        DateTimeOffset recent = DateTimeOffset.UtcNow.AddDays(-1);
         await monitor.SaveHitAsync(new Hit(recent, new AtUri("at://did:plc:monthly/app.bsky.feed.post/recent"),
             new Did("did:plc:monthly"), StatisticsStore.RightJerryDid,
             ParentPost(StatisticsStore.RightJerryDid, "monthly-recent-parent")), cancellationToken);
-        using var response = await api.GetAsync("/statistics/right-jerry/monthly-replies", cancellationToken);
+        using HttpResponseMessage response = await api.GetAsync("/statistics/right-jerry/monthly-replies", cancellationToken);
         Assert.AreEqual(HttpStatusCode.OK, response.StatusCode);
-        var apiMonths = await response.Content.ReadFromJsonAsync<MonthlyReplyCount[]>(cancellationToken);
+        MonthlyReplyCount[]? apiMonths = await response.Content.ReadFromJsonAsync<MonthlyReplyCount[]>(cancellationToken);
         Assert.IsNotNull(apiMonths);
-        Assert.AreEqual(6, apiMonths.Length);
-        Assert.IsTrue(apiMonths.Any(month =>
-            month.Month == new DateOnly(recent.Year, recent.Month, 1) && month.ReplyCount > 0));
-        for (var index = 1; index < apiMonths.Length; index++)
+        Assert.HasCount(6, apiMonths);
+        Assert.Contains(month =>
+            month.Month == new DateOnly(recent.Year, recent.Month, 1) && month.ReplyCount > 0, apiMonths);
+        for (int index = 1; index < apiMonths.Length; index++)
         {
             Assert.AreEqual(apiMonths[index - 1].Month.AddMonths(1), apiMonths[index].Month);
         }
@@ -1152,15 +1178,15 @@ public sealed class ApplicationTests
             await response.Content.ReadAsStringAsync(cancellationToken));
         Assert.AreEqual(apiMonths[0].Month.ToString("yyyy-MM-dd"), json.RootElement[0].GetProperty("month").GetString());
         Assert.AreEqual(apiMonths[0].ReplyCount, json.RootElement[0].GetProperty("replyCount").GetInt64());
-        Assert.AreEqual(2, json.RootElement[0].EnumerateObject().Count());
-        using var historyResponse = await api.GetAsync(
+        Assert.HasCount(2, json.RootElement[0].EnumerateObject());
+        using HttpResponseMessage historyResponse = await api.GetAsync(
             "/statistics/right-jerry/all-time-monthly-replies", cancellationToken);
         Assert.AreEqual(HttpStatusCode.OK, historyResponse.StatusCode);
-        var apiHistory = await historyResponse.Content.ReadFromJsonAsync<MonthlyReplyCount[]>(cancellationToken);
+        MonthlyReplyCount[]? apiHistory = await historyResponse.Content.ReadFromJsonAsync<MonthlyReplyCount[]>(cancellationToken);
         Assert.IsNotNull(apiHistory);
         Assert.AreEqual(new DateOnly(2023, 9, 1), apiHistory[0].Month);
         Assert.AreEqual(apiMonths[^1].Month, apiHistory[^1].Month);
-        for (var index = 1; index < apiHistory.Length; index++)
+        for (int index = 1; index < apiHistory.Length; index++)
         {
             Assert.AreEqual(apiHistory[index - 1].Month.AddMonths(1), apiHistory[index].Month);
         }
@@ -1181,11 +1207,11 @@ public sealed class ApplicationTests
         await store.InitializeAsync(cancellationToken);
         var expected = new List<TopReplyAuthor>();
         var expectedAll = new List<TopReplyAuthor>();
-        for (var index = 0; index < 12; index++)
+        for (int index = 0; index < 12; index++)
         {
-            var did = $"did:plc:rank{index:D2}";
-            var count = index switch { 0 => 6, 1 => 5, _ => 3 };
-            for (var post = 0; post < count; post++)
+            string did = $"did:plc:rank{index:D2}";
+            int count = index switch { 0 => 6, 1 => 5, _ => 3 };
+            for (int post = 0; post < count; post++)
             {
                 var hit = new Hit(DateTimeOffset.UtcNow, new AtUri($"at://{did}/app.bsky.feed.post/{post}"),
                     new Did(did), StatisticsStore.RightJerryDid,
@@ -1196,12 +1222,14 @@ public sealed class ApplicationTests
 
             if (index < 10)
             {
-                expected.Add(new TopReplyAuthor(did, index == 0 ? "first.example" : null, count));
+                expected.Add(new TopReplyAuthor(did, index == 0 ? "first.example" : null, count,
+                    index == 1 ? "suspended" : null));
             }
-            expectedAll.Add(new TopReplyAuthor(did, index == 0 ? "first.example" : null, count));
+            expectedAll.Add(new TopReplyAuthor(did, index == 0 ? "first.example" : null, count,
+                index == 1 ? "suspended" : null));
         }
 
-        for (var post = 0; post < 20; post++)
+        for (int post = 0; post < 20; post++)
         {
             await store.SaveHitAsync(new Hit(DateTimeOffset.UtcNow,
                 new AtUri($"at://did:plc:wrongonly/app.bsky.feed.post/{post}"),
@@ -1210,43 +1238,45 @@ public sealed class ApplicationTests
                 cancellationToken);
         }
 
-        await using var command = connection.CreateCommand();
-        command.CommandText = "UPDATE Actor SET Handle = 'first.example' WHERE Did = 'did:plc:rank00'";
+        await using MySqlCommand command = connection.CreateCommand();
+        command.CommandText = """
+            UPDATE Actor SET Handle = 'first.example' WHERE Did = 'did:plc:rank00';
+            UPDATE Actor SET AccountStatus = 'suspended' WHERE Did = 'did:plc:rank01'
+            """;
         await command.ExecuteNonQueryAsync(cancellationToken);
-        using var response = await api.GetAsync("/statistics/right-jerry/top-authors", cancellationToken);
+        using HttpResponseMessage response = await api.GetAsync("/statistics/right-jerry/top-authors", cancellationToken);
         Assert.AreEqual(HttpStatusCode.OK, response.StatusCode);
-        var authors = await response.Content.ReadFromJsonAsync<TopReplyAuthor[]>(cancellationToken);
+        TopReplyAuthor[]? authors = await response.Content.ReadFromJsonAsync<TopReplyAuthor[]>(cancellationToken);
         Assert.IsNotNull(authors);
-        CollectionAssert.AreEqual(expected, authors,
-            "Only ten authors should appear, ranked by deduplicated right-Jerry posts, with deterministic ties.");
+        Assert.AreSequenceEqual(expected, authors, "Only ten authors should appear, ranked by deduplicated right-Jerry posts, with deterministic ties.");
         using var document = System.Text.Json.JsonDocument.Parse(
             await response.Content.ReadAsStringAsync(cancellationToken));
-        var first = document.RootElement[0];
+        JsonElement first = document.RootElement[0];
         Assert.AreEqual("did:plc:rank00", first.GetProperty("did").GetString());
         Assert.AreEqual("first.example", first.GetProperty("handle").GetString());
         Assert.AreEqual(6L, first.GetProperty("replyCount").GetInt64());
-        Assert.AreEqual(3, first.EnumerateObject().Count());
+        Assert.HasCount(4, first.EnumerateObject());
         Assert.AreEqual(System.Text.Json.JsonValueKind.Null, document.RootElement[1].GetProperty("handle").ValueKind);
-        using var allResponse = await api.GetAsync("/statistics/right-jerry/authors", cancellationToken);
+        Assert.AreEqual("suspended", document.RootElement[1].GetProperty("accountStatus").GetString());
+        using HttpResponseMessage allResponse = await api.GetAsync("/statistics/right-jerry/authors", cancellationToken);
         Assert.AreEqual(HttpStatusCode.OK, allResponse.StatusCode);
-        var allAuthors = await allResponse.Content.ReadFromJsonAsync<TopReplyAuthor[]>(cancellationToken);
+        TopReplyAuthor[]? allAuthors = await allResponse.Content.ReadFromJsonAsync<TopReplyAuthor[]>(cancellationToken);
         Assert.IsNotNull(allAuthors);
-        CollectionAssert.AreEqual(expectedAll, allAuthors.Where(author => author.Did.StartsWith("did:plc:rank")).ToArray(),
-            "The full list must include authors beyond the top ten, with deduplicated counts and deterministic ties.");
-        CollectionAssert.AreEqual(authors, allAuthors.Take(10).ToArray());
-        Assert.IsFalse(allAuthors.Any(author => author.Did == "did:plc:wrongonly"));
-        Assert.AreEqual(allAuthors.Length, allAuthors.Select(author => author.Did).Distinct().Count());
-        var summary = await api.GetFromJsonAsync<ReplySummary>("/statistics/reply-summary", cancellationToken);
+        Assert.AreSequenceEqual(expectedAll, allAuthors.Where(author => author.Did.StartsWith("did:plc:rank")).ToArray(), "The full list must include authors beyond the top ten, with deduplicated counts and deterministic ties.");
+        Assert.AreSequenceEqual(authors, allAuthors.Take(10).ToArray());
+        Assert.DoesNotContain(author => author.Did == "did:plc:wrongonly", allAuthors);
+        Assert.HasCount(allAuthors.Length, allAuthors.Select(author => author.Did).Distinct());
+        ReplySummary? summary = await api.GetFromJsonAsync<ReplySummary>("/statistics/reply-summary", cancellationToken);
         Assert.IsNotNull(summary);
         Assert.AreEqual(summary.RightJerryReplies, allAuthors.Sum(author => author.ReplyCount));
 
         command.CommandText = "UPDATE Actor SET Handle = 'renamed.example' WHERE Did = 'did:plc:rank00'";
         await command.ExecuteNonQueryAsync(cancellationToken);
-        var renamed = await api.GetFromJsonAsync<TopReplyAuthor[]>("/statistics/right-jerry/top-authors", cancellationToken);
+        TopReplyAuthor[]? renamed = await api.GetFromJsonAsync<TopReplyAuthor[]>("/statistics/right-jerry/top-authors", cancellationToken);
         Assert.IsNotNull(renamed);
         Assert.AreEqual(new TopReplyAuthor("did:plc:rank00", "renamed.example", 6), renamed[0],
             "Handle updates should not change counts or create a second ranking entry.");
-        var renamedAll = await api.GetFromJsonAsync<TopReplyAuthor[]>("/statistics/right-jerry/authors", cancellationToken);
+        TopReplyAuthor[]? renamedAll = await api.GetFromJsonAsync<TopReplyAuthor[]>("/statistics/right-jerry/authors", cancellationToken);
         Assert.IsNotNull(renamedAll);
         Assert.AreEqual(renamed[0], renamedAll[0]);
     }
@@ -1254,15 +1284,15 @@ public sealed class ApplicationTests
     private static async Task VerifyTopReplyPostsAsync(HttpClient api, string connectionString,
         CancellationToken cancellationToken)
     {
-        await using var source = new MySqlDataSourceBuilder(connectionString).Build();
-        await using var connection = await source.OpenConnectionAsync(cancellationToken);
+        await using MySqlDataSource source = new MySqlDataSourceBuilder(connectionString).Build();
+        await using MySqlConnection connection = await source.OpenConnectionAsync(cancellationToken);
         var monitor = new MonitorStore(connection);
         var expected = new List<TopReplyPost>();
-        for (var index = 6; index >= 0; index--)
+        for (int index = 6; index >= 0; index--)
         {
-            var parent = ParentPost(StatisticsStore.RightJerryDid, $"top-post-{index}");
-            var count = index switch { 0 => 9, 1 => 8, _ => 7 };
-            for (var reply = 0; reply < count; reply++)
+            AtUri parent = ParentPost(StatisticsStore.RightJerryDid, $"top-post-{index}");
+            int count = index switch { 0 => 9, 1 => 8, _ => 7 };
+            for (int reply = 0; reply < count; reply++)
             {
                 var author = new Did($"did:plc:postrank{reply}");
                 var hit = new Hit(DateTimeOffset.UtcNow,
@@ -1278,7 +1308,7 @@ public sealed class ApplicationTests
             }
         }
 
-        for (var reply = 0; reply < 20; reply++)
+        for (int reply = 0; reply < 20; reply++)
         {
             var author = new Did("did:plc:postexcluded");
             await monitor.SaveHitAsync(new Hit(DateTimeOffset.UtcNow,
@@ -1291,7 +1321,7 @@ public sealed class ApplicationTests
                 cancellationToken);
         }
 
-        await using var command = connection.CreateCommand();
+        await using MySqlCommand command = connection.CreateCommand();
         command.CommandText = """
             UPDATE Hits SET ParentAtUri = NULL, ParentAtUriHash = NULL, ParentUriBackfillStatus = 2
             WHERE AuthorDid = @excluded AND ParentAuthorDid = @rightJerry;
@@ -1306,22 +1336,21 @@ public sealed class ApplicationTests
         await command.ExecuteNonQueryAsync(cancellationToken);
 
         var statistics = new StatisticsStore(source, TimeProvider.System);
-        CollectionAssert.AreEqual(expected, (await statistics.GetTopRightJerryPostsAsync(cancellationToken)).ToArray(),
-            "Repeated replies group by parent, not author; duplicate deliveries and unresolved/wrong-Jerry rows are excluded. " +
+        Assert.AreSequenceEqual(expected, (await statistics.GetTopRightJerryPostsAsync(cancellationToken)).ToArray(), "Repeated replies group by parent, not author; duplicate deliveries and unresolved/wrong-Jerry rows are excluded. " +
             "Full URIs separate hash collisions, and ties at the five-post cutoff sort by URI.");
-        using var response = await api.GetAsync("/statistics/right-jerry/top-posts", cancellationToken);
+        using HttpResponseMessage response = await api.GetAsync("/statistics/right-jerry/top-posts", cancellationToken);
         Assert.AreEqual(HttpStatusCode.OK, response.StatusCode);
-        var posts = await response.Content.ReadFromJsonAsync<TopReplyPost[]>(cancellationToken);
+        TopReplyPost[]? posts = await response.Content.ReadFromJsonAsync<TopReplyPost[]>(cancellationToken);
         Assert.IsNotNull(posts);
-        CollectionAssert.AreEqual(expected, posts);
+        Assert.AreSequenceEqual(expected, posts);
         using var json = System.Text.Json.JsonDocument.Parse(
             await response.Content.ReadAsStringAsync(cancellationToken));
-        for (var index = 0; index < expected.Count; index++)
+        for (int index = 0; index < expected.Count; index++)
         {
-            var post = json.RootElement[index];
+            JsonElement post = json.RootElement[index];
             Assert.AreEqual(expected[index].AtUri, post.GetProperty("atUri").GetString());
             Assert.AreEqual(expected[index].ReplyCount, post.GetProperty("replyCount").GetInt64());
-            Assert.AreEqual(2, post.EnumerateObject().Count());
+            Assert.HasCount(2, post.EnumerateObject());
         }
     }
 
@@ -1345,22 +1374,114 @@ public sealed class ApplicationTests
             AuthorDid = new Did("did:plc:anotherauthor")
         }, cancellationToken);
 
-        using var response = await api.GetAsync("/statistics/reply-summary", cancellationToken);
+        using HttpResponseMessage response = await api.GetAsync("/statistics/reply-summary", cancellationToken);
         Assert.AreEqual(HttpStatusCode.OK, response.StatusCode);
-        var summary = await response.Content.ReadFromJsonAsync<ReplySummary>(cancellationToken);
+        ReplySummary? summary = await response.Content.ReadFromJsonAsync<ReplySummary>(cancellationToken);
         Assert.AreEqual(new ReplySummary(5, 2, 3), summary);
-        var json = await response.Content.ReadAsStringAsync(cancellationToken);
+        string json = await response.Content.ReadAsStringAsync(cancellationToken);
         using var document = System.Text.Json.JsonDocument.Parse(json);
         Assert.AreEqual(5, document.RootElement.GetProperty("totalReplies").GetInt64());
         Assert.AreEqual(2, document.RootElement.GetProperty("rightJerryReplies").GetInt64());
         Assert.AreEqual(3, document.RootElement.GetProperty("wrongJerryReplies").GetInt64());
-        Assert.AreEqual(3, document.RootElement.EnumerateObject().Count());
+        Assert.HasCount(3, document.RootElement.EnumerateObject());
     }
+
+    private static async Task VerifyActorExclusionsAsync(string connectionString, CancellationToken cancellationToken)
+    {
+        var options = new MySqlConnectionStringBuilder(connectionString) { Pooling = false };
+        await using (var admin = new MySqlConnection(options.ConnectionString))
+        {
+            await admin.OpenAsync(cancellationToken);
+            await using MySqlCommand create = admin.CreateCommand();
+            create.CommandText = "CREATE DATABASE actor_exclusions_test";
+            await create.ExecuteNonQueryAsync(cancellationToken);
+        }
+        options.Database = "actor_exclusions_test";
+        await using var connection = new MySqlConnection(options.ConnectionString);
+        await connection.OpenAsync(cancellationToken);
+        var store = new MonitorStore(connection);
+        await store.InitializeAsync(cancellationToken);
+        Did excluded = new("did:plc:excluded");
+        Did retained = new("did:plc:retained");
+        var authored = new Hit(DateTimeOffset.UtcNow,
+            new AtUri("at://did:plc:excluded/app.bsky.feed.post/authored"), excluded,
+            StatisticsStore.RightJerryDid, ParentPost(StatisticsStore.RightJerryDid, "exclusion-parent"));
+        var addressed = authored with
+        {
+            AtUri = new AtUri("at://did:plc:retained/app.bsky.feed.post/addressed"),
+            AuthorDid = retained,
+            ParentAuthorDid = excluded,
+            ParentAtUri = ParentPost(excluded, "parent")
+        };
+        var unrelated = authored with
+        {
+            AtUri = new AtUri("at://did:plc:retained/app.bsky.feed.post/retained"),
+            AuthorDid = retained
+        };
+        await store.SaveHitAsync(authored, cancellationToken);
+        await store.SaveHitAsync(addressed, cancellationToken);
+        await store.SaveHitAsync(unrelated, cancellationToken);
+        ActorRefreshRequest stale = (await new ActorStore(connection).GetDueAsync(cancellationToken))
+            .Single(actor => actor.Did == excluded);
+        var exclusions = new ActorExclusionStore(connection);
+        Assert.AreEqual(2L, await exclusions.ExcludeAsync(excluded, cancellationToken));
+        Assert.AreEqual(0L, await exclusions.ExcludeAsync(excluded, cancellationToken),
+            "Repeated exclusions must be idempotent.");
+        await new ActorStore(connection).SaveAsync(stale, new Handle("stale.example"), cancellationToken);
+        Assert.IsFalse(await store.SaveHitAsync(authored, cancellationToken));
+        Assert.IsFalse(await store.SaveHitAsync(addressed, cancellationToken));
+        await store.InitializeAsync(cancellationToken);
+        await using (MySqlCommand command = connection.CreateCommand())
+        {
+            command.CommandText = """
+                SELECT (SELECT COUNT(*) FROM Hits),
+                    (SELECT COUNT(*) FROM Actor WHERE Did = 'did:plc:excluded'),
+                    (SELECT COUNT(*) FROM ActorRefresh WHERE Did = 'did:plc:excluded'),
+                    (SELECT COUNT(*) FROM ExcludedActor WHERE Did = 'did:plc:excluded')
+                """;
+            await using MySqlDataReader reader = await command.ExecuteReaderAsync(cancellationToken);
+            Assert.IsTrue(await reader.ReadAsync(cancellationToken));
+            Assert.AreEqual(1L, reader.GetInt64(0));
+            Assert.AreEqual(0L, reader.GetInt64(1));
+            Assert.AreEqual(0L, reader.GetInt64(2));
+            Assert.AreEqual(1L, reader.GetInt64(3));
+        }
+        await using MySqlDataSource source = new MySqlDataSourceBuilder(options.ConnectionString).Build();
+        var reports = new StatisticsStore(source, TimeProvider.System);
+        Assert.AreEqual(new ReplySummary(1, 1, 0), await reports.GetReplySummaryAsync(cancellationToken));
+        Assert.AreEqual(retained.ToString(), (await reports.GetAllRightJerryAuthorsAsync(cancellationToken)).Single().Did);
+        Assert.AreEqual(1L, (await reports.GetTopRightJerryPostsAsync(cancellationToken)).Single().ReplyCount);
+        Assert.AreEqual(1L, (await reports.GetAllTimeRightJerryRepliesAsync(cancellationToken)).Sum(month => month.ReplyCount));
+        Assert.AreEqual(1L, (await reports.GetMonthlyRightJerryRepliesAsync(cancellationToken)).Sum(month => month.ReplyCount));
+
+        // An in-flight backfill must tolerate deliberate privacy deletion, but not other missing rows.
+        var request = new ParentUriBackfillRequest(authored.AtUri, authored.ParentAuthorDid, 0);
+        var backfill = new ParentUriBackfillStore(connection);
+        await backfill.SaveResultsAsync([new(request, authored.ParentAtUri)], cancellationToken);
+        await backfill.SaveRetryTimesAsync([request], TimeSpan.FromSeconds(5), cancellationToken);
+        Assert.AreEqual(new ReplySummary(1, 1, 0), await reports.GetReplySummaryAsync(cancellationToken));
+
+        // Concurrent hit persistence and exclusion must leave no retained or reinserted data in either order.
+        await using var writer = new MySqlConnection(options.ConnectionString);
+        await writer.OpenAsync(cancellationToken);
+        var concurrentStore = new MonitorStore(writer);
+        Task<long> deletion = exclusions.ExcludeAsync(retained, cancellationToken);
+        Task<bool> ingestion = concurrentStore.SaveHitAsync(unrelated, cancellationToken);
+        await Task.WhenAll(deletion, ingestion);
+        Assert.AreEqual(new ReplySummary(0, 0, 0), await reports.GetReplySummaryAsync(cancellationToken));
+        Assert.IsFalse(await concurrentStore.SaveHitAsync(unrelated, cancellationToken));
+    }
+
+    private static readonly string[] s_expectedHitIndexes =
+    [
+        "AuthorDid", "ParentAtUriHash", "ParentAuthorDid", "ParentUriBackfillNextAttemptAt",
+        "ParentUriBackfillStatus"
+    ];
 
     private static async Task VerifyMonitorStorageAsync(string connectionString, CancellationToken cancellationToken)
     {
         var connectionOptions = new MySqlConnectionStringBuilder(connectionString) { Pooling = false };
-        var hit = ReplyMatcher.Match(ReplyMatcherTests.CreateEvent(), NullLogger.Instance);
+        Hit? hit = ReplyMatcher.Match(ReplyMatcherTests.CreateEvent(), NullLogger.Instance);
         Assert.IsNotNull(hit);
         var progress = new MonitorProgress
         {
@@ -1403,13 +1524,13 @@ public sealed class ApplicationTests
             ParentAtUri = ParentPost(hit.ParentAuthorDid.ToString(), "duplicate-must-not-replace-parent")
         }, cancellationToken);
 
-        await using var command = restarted.CreateCommand();
+        await using MySqlCommand command = restarted.CreateCommand();
         command.CommandText = """
             SELECT AtUri, CreatedAt, AuthorDid, ParentAuthorDid, ParentAtUri, ParentAtUriHash,
                 ParentUriBackfillStatus
             FROM Hits
             """;
-        await using (var reader = await command.ExecuteReaderAsync(cancellationToken))
+        await using (MySqlDataReader reader = await command.ExecuteReaderAsync(cancellationToken))
         {
             Assert.IsTrue(await reader.ReadAsync(cancellationToken));
             Assert.AreEqual(hit.AtUri.ToString(), reader.GetString(0));
@@ -1417,8 +1538,7 @@ public sealed class ApplicationTests
             Assert.AreEqual(hit.AuthorDid.ToString(), reader.GetString(2));
             Assert.AreEqual(hit.ParentAuthorDid.ToString(), reader.GetString(3));
             Assert.AreEqual(hit.ParentAtUri.ToString(), reader.GetString(4));
-            CollectionAssert.AreEqual(SHA256.HashData(Encoding.UTF8.GetBytes(hit.ParentAtUri.ToString())),
-                (byte[])reader.GetValue(5));
+            Assert.AreSequenceEqual(SHA256.HashData(Encoding.UTF8.GetBytes(hit.ParentAtUri.ToString())), (byte[])reader.GetValue(5));
             Assert.AreEqual((byte)ParentUriBackfillStatus.Resolved, reader.GetByte(6));
             Assert.IsFalse(await reader.ReadAsync(cancellationToken), "Repeated archive events must not duplicate hits.");
         }
@@ -1428,7 +1548,7 @@ public sealed class ApplicationTests
             WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'Hits' AND NON_UNIQUE = 1
             ORDER BY COLUMN_NAME
             """;
-        await using (var reader = await command.ExecuteReaderAsync(cancellationToken))
+        await using (MySqlDataReader reader = await command.ExecuteReaderAsync(cancellationToken))
         {
             var indexedColumns = new List<string>();
             while (await reader.ReadAsync(cancellationToken))
@@ -1436,15 +1556,11 @@ public sealed class ApplicationTests
                 indexedColumns.Add(reader.GetString(0));
             }
 
-            CollectionAssert.AreEqual(new[]
-            {
-                "AuthorDid", "ParentAtUriHash", "ParentAuthorDid", "ParentUriBackfillNextAttemptAt",
-                "ParentUriBackfillStatus"
-            }, indexedColumns);
+            Assert.AreSequenceEqual(s_expectedHitIndexes, indexedColumns);
         }
 
         command.CommandText = "SELECT Did, Handle, UpdatedAt FROM Actor ORDER BY Did";
-        await using (var reader = await command.ExecuteReaderAsync(cancellationToken))
+        await using (MySqlDataReader reader = await command.ExecuteReaderAsync(cancellationToken))
         {
             var actors = new List<string>();
             while (await reader.ReadAsync(cancellationToken))
@@ -1452,11 +1568,11 @@ public sealed class ApplicationTests
                 actors.Add(reader.GetString(0));
                 Assert.IsTrue(reader.IsDBNull(1), "Unknown handles must remain null.");
                 Assert.IsFalse(reader.IsDBNull(2), "An actor must have its row creation time.");
-                Assert.IsTrue(Math.Abs((DateTime.UtcNow - reader.GetDateTime(2)).TotalMinutes) < 5,
+                Assert.IsLessThan(5, Math.Abs((DateTime.UtcNow - reader.GetDateTime(2)).TotalMinutes),
                     "UpdatedAt must be the row creation time, not the historical post time.");
             }
 
-            CollectionAssert.AreEquivalent(new[] { hit.AuthorDid.ToString(), hit.ParentAuthorDid.ToString() }, actors);
+            Assert.AreSequenceEqual(new[] { hit.AuthorDid.ToString(), hit.ParentAuthorDid.ToString() }, actors, Microsoft.VisualStudio.TestTools.UnitTesting.SequenceOrder.InAnyOrder);
         }
 
         command.CommandText = """
@@ -1467,7 +1583,7 @@ public sealed class ApplicationTests
         await command.ExecuteNonQueryAsync(cancellationToken);
         await resumed.SaveHitAsync(hit, cancellationToken);
         command.CommandText = "SELECT Handle, UpdatedAt FROM Actor WHERE Did = @did";
-        await using (var reader = await command.ExecuteReaderAsync(cancellationToken))
+        await using (MySqlDataReader reader = await command.ExecuteReaderAsync(cancellationToken))
         {
             Assert.IsTrue(await reader.ReadAsync(cancellationToken));
             Assert.AreEqual("actor.example", reader.GetString(0));
@@ -1484,7 +1600,7 @@ public sealed class ApplicationTests
         Assert.AreEqual(1L, Convert.ToInt64(await command.ExecuteScalarAsync(cancellationToken)),
             "A missing parent actor must be added even when the author already exists.");
 
-        var selfReply = hit with
+        Hit selfReply = hit with
         {
             AtUri = new AtUri("at://did:plc:self/app.bsky.feed.post/self"),
             AuthorDid = new Did("did:plc:self"),
@@ -1496,7 +1612,7 @@ public sealed class ApplicationTests
         command.CommandText = "SELECT COUNT(*) FROM Actor WHERE Did = 'did:plc:self'";
         Assert.AreEqual(1L, Convert.ToInt64(await command.ExecuteScalarAsync(cancellationToken)));
 
-        var invalidHit = hit with
+        Hit invalidHit = hit with
         {
             AtUri = new AtUri("at://did:plc:timestamp/app.bsky.feed.post/rollback"),
             AuthorDid = new Did("did:plc:rollbackauthor"),
@@ -1518,20 +1634,20 @@ public sealed class ApplicationTests
             "Actor inserts must roll back if the hit cannot be saved.");
 
         var actorStore = new ActorStore(restarted);
-        var pendingActors = await actorStore.GetDueAsync(cancellationToken);
-        Assert.AreEqual(4, pendingActors.Count, "Duplicate hits must not create duplicate refresh jobs.");
-        var authorRequest = pendingActors.Single(actor => actor.Did == hit.AuthorDid);
+        IReadOnlyList<ActorRefreshRequest> pendingActors = await actorStore.GetDueAsync(cancellationToken);
+        Assert.HasCount(4, pendingActors, "Duplicate hits must not create duplicate refresh jobs.");
+        ActorRefreshRequest authorRequest = pendingActors.Single(actor => actor.Did == hit.AuthorDid);
         await actorStore.SaveAsync(authorRequest, new Handle("renamed.example"), cancellationToken);
         command.CommandText = "SELECT Handle, UpdatedAt FROM Actor WHERE Did = @did";
-        await using (var reader = await command.ExecuteReaderAsync(cancellationToken))
+        await using (MySqlDataReader reader = await command.ExecuteReaderAsync(cancellationToken))
         {
             Assert.IsTrue(await reader.ReadAsync(cancellationToken));
             Assert.AreEqual("renamed.example", reader.GetString(0));
-            Assert.IsTrue(reader.GetDateTime(1) > new DateTime(2026, 1, 1, 0, 0, 0, DateTimeKind.Unspecified),
+            Assert.IsGreaterThan(new DateTime(2026, 1, 1, 0, 0, 0, DateTimeKind.Unspecified), reader.GetDateTime(1),
                 "Writing a handle must refresh UpdatedAt.");
         }
 
-        Assert.IsFalse((await actorStore.GetDueAsync(cancellationToken)).Any(actor => actor.Did == hit.AuthorDid));
+        Assert.DoesNotContain(actor => actor.Did == hit.AuthorDid, await actorStore.GetDueAsync(cancellationToken));
         await actorStore.InvalidateAsync(new Did("did:plc:untracked"), cancellationToken);
         command.CommandText = "SELECT COUNT(*) FROM Actor WHERE Did = 'did:plc:untracked'";
         Assert.AreEqual(0L, Convert.ToInt64(await command.ExecuteScalarAsync(cancellationToken)));
@@ -1548,7 +1664,7 @@ public sealed class ApplicationTests
             }
         }, resumed, NullLogger.Instance, cancellationToken);
         await actorStore.InvalidateAsync(hit.AuthorDid, cancellationToken);
-        var invalidated = (await actorStore.GetDueAsync(cancellationToken))
+        ActorRefreshRequest invalidated = (await actorStore.GetDueAsync(cancellationToken))
             .Single(actor => actor.Did == hit.AuthorDid);
         Assert.AreEqual(authorRequest.Revision + 2, invalidated.Revision);
         await actorStore.SaveAsync(authorRequest, new Handle("stale.example"), cancellationToken);
@@ -1558,7 +1674,7 @@ public sealed class ApplicationTests
         await actorStore.SaveAsync(invalidated, new Handle("current.example"), cancellationToken);
         Assert.AreEqual("current.example", await command.ExecuteScalarAsync(cancellationToken));
 
-        var parentRequest = (await actorStore.GetDueAsync(cancellationToken))
+        ActorRefreshRequest parentRequest = (await actorStore.GetDueAsync(cancellationToken))
             .Single(actor => actor.Did == hit.ParentAuthorDid);
         await actorStore.SaveAsync(parentRequest, null, cancellationToken);
         command.CommandText = """
@@ -1566,21 +1682,54 @@ public sealed class ApplicationTests
             FROM ActorRefresh WHERE Did = @parent
             """;
         command.Parameters.AddWithValue("@parent", hit.ParentAuthorDid.ToString());
-        var retrySeconds = Convert.ToInt64(await command.ExecuteScalarAsync(cancellationToken));
+        long retrySeconds = Convert.ToInt64(await command.ExecuteScalarAsync(cancellationToken));
         Assert.IsTrue(retrySeconds is >= 895 and <= 900);
         command.CommandText = """
             SELECT TIMESTAMPDIFF(SECOND, UTC_TIMESTAMP(6), NextAttemptAt)
             FROM ActorRefresh WHERE Did = @did
             """;
-        var refreshSeconds = Convert.ToInt64(await command.ExecuteScalarAsync(cancellationToken));
+        long refreshSeconds = Convert.ToInt64(await command.ExecuteScalarAsync(cancellationToken));
         Assert.IsTrue(refreshSeconds is >= 86395 and <= 86400);
 
+        await actorStore.SaveResolutionAsync(parentRequest, new(null, "deactivated"), cancellationToken);
+        command.CommandText = """
+            SELECT a.Handle, a.AccountStatus, TIMESTAMPDIFF(SECOND, UTC_TIMESTAMP(6), r.NextAttemptAt)
+            FROM Actor a JOIN ActorRefresh r ON r.Did = a.Did WHERE a.Did = @parent
+            """;
+        await using (MySqlDataReader reader = await command.ExecuteReaderAsync(cancellationToken))
+        {
+            Assert.IsTrue(await reader.ReadAsync(cancellationToken));
+            Assert.IsTrue(reader.IsDBNull(0), "Status labels must never be stored as fake handles.");
+            Assert.AreEqual("deactivated", reader.GetString(1));
+            Assert.IsTrue(reader.GetInt64(2) is >= 86395 and <= 86400);
+        }
+        await JetstreamMonitor.ProcessAsync(new JetstreamAccountEvent
+        {
+            Did = hit.ParentAuthorDid,
+            Kind = JetStreamEventKind.Account,
+            TimeStamp = 0,
+            Sequence = 602,
+            Account = new JetstreamAccount
+            {
+                Did = hit.ParentAuthorDid,
+                Active = true,
+                Sequence = 602,
+                TimeStamp = DateTimeOffset.UnixEpoch
+            }
+        }, resumed, NullLogger.Instance, cancellationToken);
+        await actorStore.SaveResolutionAsync(parentRequest, new(null, "deleted"), cancellationToken);
+        command.CommandText = "SELECT AccountStatus FROM Actor WHERE Did = @parent";
+        Assert.AreEqual(DBNull.Value, await command.ExecuteScalarAsync(cancellationToken),
+            "A stale status lookup must not overwrite a newer account event.");
+        ActorRefreshRequest refreshedParent = (await actorStore.GetDueAsync(cancellationToken))
+            .Single(actor => actor.Did == hit.ParentAuthorDid);
+        await actorStore.SaveAsync(refreshedParent, null, cancellationToken);
+
         await resumed.InitializeAsync(cancellationToken);
-        Assert.IsFalse((await actorStore.GetDueAsync(cancellationToken))
-            .Any(actor => actor.Did == hit.AuthorDid || actor.Did == hit.ParentAuthorDid),
+        Assert.DoesNotContain(actor => actor.Did == hit.AuthorDid || actor.Did == hit.ParentAuthorDid, await actorStore.GetDueAsync(cancellationToken),
             "Restart must retain successful refresh schedules and failed-lookup backoff.");
         await resumed.SaveHitAsync(hit, cancellationToken);
-        Assert.IsFalse((await actorStore.GetDueAsync(cancellationToken)).Any(actor => actor.Did == hit.AuthorDid),
+        Assert.DoesNotContain(actor => actor.Did == hit.AuthorDid, await actorStore.GetDueAsync(cancellationToken),
             "A duplicate hit must not reset a resolved actor's refresh schedule.");
 
         command.CommandText = """
@@ -1590,7 +1739,7 @@ public sealed class ApplicationTests
             """;
         await command.ExecuteNonQueryAsync(cancellationToken);
         await resumed.InitializeAsync(cancellationToken);
-        Assert.IsTrue((await actorStore.GetDueAsync(cancellationToken)).Any(actor => actor.Did == hit.ParentAuthorDid),
+        Assert.Contains(actor => actor.Did == hit.ParentAuthorDid, await actorStore.GetDueAsync(cancellationToken),
             "Upgrading an existing hits database must seed missing actors and durable refresh jobs.");
         command.CommandText = "SELECT Handle FROM Actor WHERE Did = @did";
         Assert.AreEqual("current.example", await command.ExecuteScalarAsync(cancellationToken),
@@ -1598,14 +1747,22 @@ public sealed class ApplicationTests
         command.CommandText = "SELECT COUNT(*) FROM MonitorSchemaMigration WHERE MigrationId = 'actor-refresh-v1'";
         Assert.AreEqual(1L, Convert.ToInt64(await command.ExecuteScalarAsync(cancellationToken)));
 
-        var liveProgress = progress with { LiveAfterSeq = 600 };
+        MonitorProgress liveProgress = progress with { LiveAfterSeq = 600 };
         resumed.SaveProgress(liveProgress);
         Assert.AreEqual(liveProgress, await resumed.LoadProgressAsync(cancellationToken));
-        var recovery = liveProgress.ReturnToArchive();
+        MonitorProgress recovery = liveProgress.ReturnToArchive();
         Assert.AreEqual(600, recovery.AfterSeq);
         Assert.IsNull(recovery.LiveAfterSeq);
         Assert.IsNull(recovery.ArchiveCheckpoint);
         resumed.SaveProgress(recovery);
         Assert.AreEqual(recovery, await resumed.LoadProgressAsync(cancellationToken));
     }
+
+    [GeneratedRegex(@"Total Jerry no replies</th><td[^>]*>5</td>")]
+    private static partial Regex TotalRepliesRegex();
+    [GeneratedRegex("\u2937 the right Jerry</th><td[^>]*>2</td>")]
+    private static partial Regex RightJerryRepliesRegex();
+
+    [GeneratedRegex("\u2937 the wrong Jerry</th><td[^>]*>3</td>")]
+    private static partial Regex WrongJerryRepliesRegex();
 }

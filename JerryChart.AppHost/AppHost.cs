@@ -24,7 +24,7 @@ builder.AddProject<Projects.JerryChart_Monitor>("monitor")
     .WithEnvironment("Jetstream__ApiKey", archiveKey)
     .WithEnvironment("Logging__LogLevel__JerryChart.Monitor", "Debug");
 
-builder.AddJavaScriptApp("web", Path.Combine("..", "jerrychart-web"))
+builder.AddJavaScriptApp("web", Path.Combine("..", "JerryChart.Web"))
     .WithRunScript("dev")
     .WithNpm(installCommand: "ci")
     .WithHttpEndpoint(env: "PORT")

@@ -132,6 +132,46 @@ test("profile display text removes directional controls and bounds stacked marks
   assert.equal(profileDisplayText("x" + "\u030d".repeat(20) + "y"), "x" + "\u030d".repeat(3) + "y");
 });
 
+test("profile text links bare public domains over HTTPS and preserves punctuation and explicit URL schemes", () => {
+  const { ProfileText } = modules()("components\\profile-text.tsx");
+  for (const [text, href, label] of [
+    ["Visit dame.is.", "https://dame.is", "dame.is"],
+    ["(www.dame.is/about).", "https://www.dame.is/about", "www.dame.is/about"],
+    ["日本.jp", "https://日本.jp", "日本.jp"],
+    ["https://example.com/a(foo).", "https://example.com/a(foo)", "https://example.com/a(foo)"],
+    ["http://example.com/path", "http://example.com/path", "http://example.com/path"],
+    ["example.photography", "https://example.photography", "example.photography"],
+  ]) {
+    const markup = renderToStaticMarkup(React.createElement(ProfileText, { text }));
+    assert.ok(markup.includes(`href="${href}"`), markup);
+    assert.ok(markup.includes(`>${label}</a>`), markup);
+    assert.match(markup, /target="_blank" rel="noopener noreferrer"/);
+    const start = text.indexOf(label);
+    const expected = renderToStaticMarkup(React.createElement(React.Fragment, null,
+      text.slice(0, start),
+      React.createElement("a", {
+        href, target: "_blank", rel: "noopener noreferrer", className: "underline underline-offset-4",
+      }, label),
+      text.slice(start + label.length),
+    ));
+    assert.equal(markup, expected);
+  }
+});
+
+test("profile text leaves emails, unsupported protocols, unknown suffixes and unresolved mentions as text", () => {
+  const { ProfileText } = modules()("components\\profile-text.tsx");
+  for (const text of ["foo@dame.is", "mailto:foo@dame.is", "@dame.is",
+    "ftp://example.com", "//example.com", "javascript:alert(1)", "example.zz",
+    "version 1.2.3", "https://user:password@example.com"]) {
+    const markup = renderToStaticMarkup(React.createElement(ProfileText, { text }));
+    assert.doesNotMatch(markup, /<a\b/, markup);
+    const expected = renderToStaticMarkup(React.createElement(
+      text.startsWith("@") ? "span" : React.Fragment, null, text,
+    ));
+    assert.equal(markup, expected);
+  }
+});
+
 test("profile fetch validates optional verification metadata without rejecting future status strings", async (context) => {
   let verification;
   replaceFetch(context, async () => response({

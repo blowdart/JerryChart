@@ -146,7 +146,15 @@ test("profile text links bare public domains over HTTPS and preserves punctuatio
     assert.ok(markup.includes(`href="${href}"`), markup);
     assert.ok(markup.includes(`>${label}</a>`), markup);
     assert.match(markup, /target="_blank" rel="noopener noreferrer"/);
-    assert.equal(markup.replace(/<[^>]*>/g, ""), text);
+    const start = text.indexOf(label);
+    const expected = renderToStaticMarkup(React.createElement(React.Fragment, null,
+      text.slice(0, start),
+      React.createElement("a", {
+        href, target: "_blank", rel: "noopener noreferrer", className: "underline underline-offset-4",
+      }, label),
+      text.slice(start + label.length),
+    ));
+    assert.equal(markup, expected);
   }
 });
 
@@ -157,7 +165,10 @@ test("profile text leaves emails, unsupported protocols, unknown suffixes and un
     "version 1.2.3", "https://user:password@example.com"]) {
     const markup = renderToStaticMarkup(React.createElement(ProfileText, { text }));
     assert.doesNotMatch(markup, /<a\b/, markup);
-    assert.equal(markup.replace(/<[^>]*>/g, ""), text);
+    const expected = renderToStaticMarkup(React.createElement(
+      text.startsWith("@") ? "span" : React.Fragment, null, text,
+    ));
+    assert.equal(markup, expected);
   }
 });
 

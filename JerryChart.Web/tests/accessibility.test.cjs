@@ -52,7 +52,7 @@ test("expanded monthly chart is a labelled, keyboard-focusable scroll region", (
   assert.doesNotMatch(compact, /role="region"|tabindex="0"/);
 });
 
-test("author search uses a high-contrast boundary and announces successful and ambiguous results", () => {
+test("author search retains its outward high-contrast focus outline outside the list scroller and announces results", () => {
   const states = [];
   let stateIndex = 0;
   let idIndex = 0;
@@ -80,6 +80,7 @@ test("author search uses a high-contrast boundary and announces successful and a
     "@/components/ui/button": { Button: () => null },
   });
   const dialog = ReplyAuthorsDialog({ authors });
+  assert.equal(dialog.props.scrollContent, false);
   const search = dialog.props.children(authors);
 
   function renderSearch() {
@@ -108,6 +109,10 @@ test("author search uses a high-contrast boundary and announces successful and a
   assert.match(markup, /role="status" aria-live="polite" aria-atomic="true"/);
 
   const input = findElement(tree, "input");
+  assert.match(findElement(tree, "form").props.className, /shrink-0/);
+  assert.ok(input.props.className.split(" ").includes("focus-visible:outline-2"));
+  assert.ok(input.props.className.split(" ").includes("focus-visible:outline-offset-2"));
+  assert.ok(!input.props.className.split(" ").includes("focus-visible:-outline-offset-2"));
   input.props.onChange({ target: { value: "alice.bsky.social" } });
   tree = renderSearch();
   findElement(tree, "form").props.onSubmit({ preventDefault() {} });
@@ -120,4 +125,22 @@ test("author search uses a high-contrast boundary and announces successful and a
   findElement(tree, "form").props.onSubmit({ preventDefault() {} });
   markup = renderToStaticMarkup(renderSearch());
   assert.match(markup, /Multiple matching handles; refine your search\./);
+});
+
+test("expanded author list owns scrolling and keeps every column header sticky without changing the home table", () => {
+  const { ReplyAuthorsTable } = loadModule("components\\reply-authors-table.tsx", {
+    "@/components/profile-hover-card": { ProfileHoverCard: () => null },
+  });
+  const props = {
+    authors: [{ did: "did:plc:alice", handle: "alice.bsky.social", replyCount: 12 }],
+    label: "All reply authors to the right Jerry",
+  };
+  const expanded = renderToStaticMarkup(React.createElement(ReplyAuthorsTable, { ...props, scrollable: true }));
+  assert.match(expanded, /min-h-0 flex-1 overflow-auto/);
+  assert.match(expanded, /role="region"/);
+  assert.match(expanded, /tabindex="0"/);
+  assert.equal((expanded.match(/sticky top-0 z-10 bg-background/g) ?? []).length, 3);
+  assert.equal((expanded.match(/scope="col"/g) ?? []).length, 3);
+  const compact = renderToStaticMarkup(React.createElement(ReplyAuthorsTable, props));
+  assert.doesNotMatch(compact, /sticky|role="region"|tabindex/);
 });

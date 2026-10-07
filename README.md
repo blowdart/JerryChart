@@ -7,6 +7,8 @@ his choices. It records replies containing "Jerry no", distinguishes replies
 to the correct Jerry from everyone else, and displays counts, user rankings,
 and monthly charts.
 
+![Jerry No dashboard showing reply totals, the five most-replied-to posts, a monthly reply chart, the top ten users, and processing status.](docs/images/jerrychart-website.png)
+
 Built with .NET 10, Aspire 13.6, MySQL 8.4, and Next.js with shadcn/ui and
 Tailwind CSS. Historical replay resumes from durable checkpoints before
 switching to live Jetstream monitoring. Statistics reflect data recorded so

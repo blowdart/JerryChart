@@ -7,13 +7,14 @@ interface StatisticsDialogProps<T> {
   triggerLabel: string;
   trigger: ReactNode;
   overlayTrigger?: boolean;
+  scrollContent?: boolean;
   path: string;
   isValid: (value: unknown) => value is T;
   children: (value: T) => ReactNode;
 }
 
 export function StatisticsDialog<T>({
-  title, triggerLabel, trigger, overlayTrigger = false, path, isValid, children,
+  title, triggerLabel, trigger, overlayTrigger = false, scrollContent = true, path, isValid, children,
 }: StatisticsDialogProps<T>) {
   const titleId = useId();
   const dialog = useRef<HTMLDialogElement>(null);
@@ -83,7 +84,9 @@ export function StatisticsDialog<T>({
               Close
             </button>
           </div>
-          <div data-statistics-scroll className="min-h-0 overflow-x-hidden overflow-y-auto">
+          <div data-statistics-scroll={scrollContent ? "" : undefined} className={scrollContent
+            ? "min-h-0 overflow-x-hidden overflow-y-auto"
+            : "flex min-h-0 flex-col"}>
             {error ? (
               <div role="alert" className="space-y-3">
                 <p>Unable to load statistics. Please try again.</p>

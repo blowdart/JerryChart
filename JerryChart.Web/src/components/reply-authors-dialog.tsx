@@ -14,7 +14,7 @@ function SearchableAuthors({ authors }: { authors: TopReplyAuthor[] }) {
   const [message, setMessage] = useState("");
   const [searchNumber, setSearchNumber] = useState(0);
   const row = useRef<HTMLTableRowElement>(null);
-  const content = useRef<HTMLDivElement>(null);
+  const list = useRef<HTMLDivElement>(null);
 
   function findAuthor(value: string) {
     const handle = value.trim().replace(/^@/, "").toLowerCase();
@@ -30,9 +30,9 @@ function SearchableAuthors({ authors }: { authors: TopReplyAuthor[] }) {
   }, [match, searchNumber]);
 
   return (
-    <div ref={content} className="space-y-4">
+    <div className="flex min-h-0 flex-col gap-4">
       <form
-        className="sticky top-0 z-30 space-y-2 bg-background pb-3"
+        className="shrink-0 space-y-2 bg-background pb-3"
         onSubmit={(event) => {
           event.preventDefault();
           const author = findAuthor(query);
@@ -63,7 +63,7 @@ function SearchableAuthors({ authors }: { authors: TopReplyAuthor[] }) {
               setMatch(findAuthor(value) ?? null);
               setMessage("");
               if (value.trim().length === 0) {
-                content.current?.closest("[data-statistics-scroll]")?.scrollTo({ top: 0, behavior: "instant" });
+                list.current?.scrollTo({ top: 0, behavior: "instant" });
               }
             }}
             placeholder="@handle.bsky.social"
@@ -74,7 +74,7 @@ function SearchableAuthors({ authors }: { authors: TopReplyAuthor[] }) {
               <option key={author.did} value={`${query.trim().startsWith("@") ? "@" : ""}${author.handle}`} />
             ))}
           </datalist>
-          <Button type="submit" variant="outline" aria-label="Search">
+          <Button type="submit" variant="outline" aria-label="Search" title="search">
             <span aria-hidden="true">⌕</span>
           </Button>
         </div>
@@ -87,6 +87,8 @@ function SearchableAuthors({ authors }: { authors: TopReplyAuthor[] }) {
         label="All reply authors to the right Jerry"
         highlightedDid={match?.did}
         highlightedRowRef={row}
+        scrollable
+        scrollRef={list}
       />
     </div>
   );
@@ -99,6 +101,7 @@ export function ReplyAuthorsDialog({ authors }: { authors: TopReplyAuthor[] }) {
       triggerLabel="Show all users telling the correct Jerry No"
       trigger={<ReplyAuthorsTable authors={authors} label="Top ten reply authors to the right Jerry" clickable />}
       overlayTrigger
+      scrollContent={false}
       path="/api/statistics/authors"
       isValid={isReplyAuthorList}
     >

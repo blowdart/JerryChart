@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useId, useRef, useState, type ReactNode } from "react";
-import { Maximize2 } from "lucide-react";
+import { Maximize2, X } from "lucide-react";
 
 interface StatisticsDialogProps<T> {
   title: string;
@@ -94,8 +94,14 @@ export function StatisticsDialog<T>({
         <div className="flex max-h-[calc(90vh_-_3rem)] flex-col">
           <div className="mb-6 flex shrink-0 items-start justify-between gap-4">
             <h2 id={titleId} className="text-xl font-semibold">{data !== null && loadedTitle ? loadedTitle(data) : title}</h2>
-            <button type="button" onClick={() => dialog.current?.close()} className="rounded border px-3 py-1">
-              Close
+            <button
+              type="button"
+              aria-label="Close details"
+              title="Close details"
+              onClick={() => dialog.current?.close()}
+              className="flex size-8 shrink-0 cursor-pointer items-center justify-center rounded border hover:bg-muted focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-foreground"
+            >
+              <X aria-hidden="true" className="size-4" />
             </button>
           </div>
           <div data-statistics-scroll={scrollContent ? "" : undefined} className={scrollContent

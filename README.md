@@ -276,7 +276,7 @@ dashboard. Each meter produces measurements when its corresponding SDK
 component is used.
 
 The monitor uses `idunno.AtProto` and `idunno.Bluesky`
-**8.0.0-prerelease.g7b3b498381**, following the documentation and sample on the
+**8.0.0-prerelease.ga282f8f4ca**, following the documentation and sample on the
 [version/v8.0.0 branch](https://github.com/blowdart/idunno.Bluesky/blob/version/v8.0.0/docs/docs/jetstreamReplay.md).
 It replays `app.bsky.feed.post` commits for all authors and consumes post commits
 and identity events in the live tail. A hit must be a reply and

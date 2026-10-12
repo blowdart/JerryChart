@@ -1,5 +1,7 @@
 "use client";
 
+import { Maximize2, X } from "lucide-react";
+
 import { useEffect, useId, useRef, useState } from "react";
 import { activityMessage, activityOutcome, activitySummary, isProcessingStatus, replayThroughputMessage, type ProcessingStatus as Status } from "@/lib/processing-status";
 import { LocalizedTime } from "@/components/localized-time";
@@ -144,6 +146,7 @@ export function ProcessingStatus({ initial }: { initial: InitialStatus }) {
         type="button"
         aria-haspopup="dialog"
         aria-label="Processing status details"
+        title="Processing status details"
         className="ml-auto block w-fit max-w-full rounded-lg text-right focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-foreground"
         onClick={() => detailsDialog.current?.showModal()}
       >
@@ -154,7 +157,9 @@ export function ProcessingStatus({ initial }: { initial: InitialStatus }) {
               {activitySummary(snapshot.monitor.activity, snapshot.observedAt, elapsed, snapshot.monitor.archiveReplay)}
             </span>
             : !error && <span className="block">Worker activity is unknown.</span>}
-          <span className="block text-xs underline underline-offset-4">View detailed status</span>
+          <span className="flex items-center justify-end gap-1 text-xs underline underline-offset-4">
+            View detailed status <Maximize2 aria-hidden="true" className="size-4" />
+          </span>
         </span>
       </button>
       <dialog
@@ -167,10 +172,12 @@ export function ProcessingStatus({ initial }: { initial: InitialStatus }) {
           <button
             type="button"
             autoFocus
+            aria-label="Close processing status details"
+            title="Close processing status details"
             onClick={() => detailsDialog.current?.close()}
-            className="rounded border px-3 py-1 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-foreground"
+            className="flex size-8 shrink-0 cursor-pointer items-center justify-center rounded border hover:bg-muted focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-foreground"
           >
-            Close
+            <X aria-hidden="true" className="size-4" />
           </button>
         </div>
         <div className="space-y-2 text-sm text-muted-foreground">

@@ -13,7 +13,11 @@ export function isRightJerryPostUri(value: unknown): value is string {
 }
 
 export function isReplyPostList(value: unknown): value is TopReplyPost[] {
-  return Array.isArray(value) && value.length <= 5 &&
+  return Array.isArray(value) && value.length <= 5 && isAllReplyPostList(value);
+}
+
+export function isAllReplyPostList(value: unknown): value is TopReplyPost[] {
+  return Array.isArray(value) &&
     value.every((post) =>
       typeof post === "object" && post !== null &&
       isRightJerryPostUri(post.atUri) &&

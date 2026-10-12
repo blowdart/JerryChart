@@ -54,6 +54,10 @@ app.MapGet("/statistics/right-jerry/authors", async (StatisticsStore store, Canc
     TypedResults.Ok(await ApiMetrics.QueryAsync(StatisticsReport.Authors,
         () => store.GetAllRightJerryAuthorsAsync(cancellationToken), cancellationToken, result => result.Count)));
 
+app.MapGet("/statistics/right-jerry/posts", async (StatisticsStore store, CancellationToken cancellationToken) =>
+    TypedResults.Ok(await ApiMetrics.QueryAsync(StatisticsReport.Posts,
+        () => store.GetAllRightJerryPostsAsync(cancellationToken), cancellationToken, result => result.Count)));
+
 app.MapGet("/statistics/right-jerry/monthly-replies", async (StatisticsStore store, CancellationToken cancellationToken) =>
     TypedResults.Ok(await ApiMetrics.QueryAsync(StatisticsReport.MonthlyReplies,
         () => store.GetMonthlyRightJerryRepliesAsync(cancellationToken), cancellationToken, result => result.Count)));

@@ -1368,6 +1368,12 @@ public sealed partial class ApplicationTests
         TopReplyPost[]? posts = await response.Content.ReadFromJsonAsync<TopReplyPost[]>(cancellationToken);
         Assert.IsNotNull(posts);
         Assert.AreSequenceEqual(expected, posts);
+        TopReplyPost[]? allPosts = await api.GetFromJsonAsync<TopReplyPost[]>(
+            "/statistics/right-jerry/posts", cancellationToken);
+        Assert.IsNotNull(allPosts);
+        Assert.AreSequenceEqual(expected, allPosts.Take(5).ToArray());
+        Assert.Contains(new TopReplyPost(ParentPost(StatisticsStore.RightJerryDid, "top-post-6").ToString(), 7), allPosts);
+        Assert.HasCount(allPosts.Length, allPosts.Select(post => post.AtUri).Distinct());
         using var json = System.Text.Json.JsonDocument.Parse(
             await response.Content.ReadAsStringAsync(cancellationToken));
         for (int index = 0; index < expected.Count; index++)

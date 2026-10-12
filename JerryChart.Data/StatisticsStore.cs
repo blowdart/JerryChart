@@ -29,7 +29,7 @@ public sealed class StatisticsStore(MySqlDataSource dataSource, TimeProvider tim
 
     /// <summary>Gets every resolved parent post receiving matching replies to the right Jerry.</summary>
     /// <param name="cancellationToken">A token to cancel the database operation.</param>
-    /// <returns>All-time counts ordered by count descending and parent URI ascending.</returns>
+    /// <returns>The all-time counts ordered by count descending and parent URI ascending.</returns>
     /// <exception cref="MySqlException">The database connection or query fails.</exception>
     /// <exception cref="OperationCanceledException">The operation is canceled.</exception>
     /// <exception cref="ObjectDisposedException">The data source has been disposed.</exception>

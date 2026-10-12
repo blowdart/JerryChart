@@ -77,6 +77,37 @@ test("detail dialogs expose icon-only close buttons with accessible names, toolt
   assert.equal(closed, 2);
 });
 
+test("closing statistics dialogs aborts requests and removes loaded children", () => {
+  const controller = new AbortController();
+  const states = [[{ atUri: "post" }], false];
+  let stateIndex = 0;
+  let refIndex = 0;
+  const hooks = {
+    ...React,
+    useEffect() {},
+    useId() { return "details-title"; },
+    useRef() { return { current: refIndex++ === 0 ? null : controller }; },
+    useState() {
+      const index = stateIndex++;
+      return [states[index], (value) => { states[index] = value; }];
+    },
+  };
+  const { StatisticsDialog } = loadModule("components\\statistics-dialog.tsx", { react: hooks });
+  const props = {
+    title: "All posts", triggerLabel: "Show posts", trigger: "Posts",
+    path: "/api/statistics/posts", isValid: Array.isArray,
+    children: () => React.createElement("p", null, "Loaded posts"),
+  };
+  let tree = StatisticsDialog(props);
+  assert.match(renderToStaticMarkup(tree), /Loaded posts/);
+  tree.props.children[1].props.onClose();
+  assert.ok(controller.signal.aborted);
+  assert.equal(states[0], null);
+  stateIndex = refIndex = 0;
+  tree = StatisticsDialog(props);
+  assert.doesNotMatch(renderToStaticMarkup(tree), /Loaded posts/);
+});
+
 test("expanded monthly chart is a labelled, keyboard-focusable scroll region", () => {
   const { MonthlyRepliesChart } = loadModule("components\\monthly-replies-chart.tsx");
   const months = [{ month: "2026-01", replyCount: 3 }, { month: "2026-02", replyCount: 4 }];

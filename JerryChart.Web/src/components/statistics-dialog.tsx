@@ -82,7 +82,10 @@ export function StatisticsDialog<T>({
         ref={dialog}
         aria-labelledby={titleId}
         className="fixed inset-0 m-auto max-h-[90vh] w-[calc(100%_-_2rem)] max-w-6xl overflow-hidden rounded-xl border bg-background p-6 text-foreground shadow-xl backdrop:bg-black/60"
-        onClose={() => pending.current?.abort()}
+        onClose={() => {
+          pending.current?.abort();
+          setData(null);
+        }}
         onClick={(event) => {
           if (event.target === event.currentTarget) {
             const bounds = event.currentTarget.getBoundingClientRect();

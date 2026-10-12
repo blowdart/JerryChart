@@ -8,6 +8,14 @@ The frontend renders Jerry no summaries, top reply authors, and monthly reply
 charts through server components. `API_BASE_URL` is supplied by Aspire and never exposed to the
 browser. MySQL is accessible only through the .NET API.
 
+The top-five posts card opens a ranked dialog of all resolved Jerry posts with
+recorded matching replies. Bluesky post text loads in sequential batches of five,
+with each batch displayed immediately. Completed batches remain visible if a
+later request fails; the dialog reports the failure and offers a retry.
+Completed batches are cached in the owning card's memory across dialog openings.
+Retries resume after cached batches. A changed ranked URI list invalidates the
+cache, and reloading the page clears it; nothing is stored in browser storage.
+
 Profile hover cards display Bluesky's verification badge beside the name only
 when the public profile reports a valid verified status. A domain handle or
 trusted-verifier status alone does not grant this badge. Profiles use the existing

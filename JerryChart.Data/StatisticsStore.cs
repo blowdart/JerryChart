@@ -21,8 +21,26 @@ public sealed class StatisticsStore(MySqlDataSource dataSource, TimeProvider tim
     /// <exception cref="MySqlException">The database connection or query fails.</exception>
     /// <exception cref="OperationCanceledException">The operation is canceled.</exception>
     /// <exception cref="ObjectDisposedException">The data source has been disposed.</exception>
-    public async Task<IReadOnlyList<TopReplyPost>> GetTopRightJerryPostsAsync(
+    public Task<IReadOnlyList<TopReplyPost>> GetTopRightJerryPostsAsync(
         CancellationToken cancellationToken = default)
+    {
+        return GetRightJerryPostsAsync(5, cancellationToken);
+    }
+
+    /// <summary>Gets every resolved parent post receiving matching replies to the right Jerry.</summary>
+    /// <param name="cancellationToken">A token to cancel the database operation.</param>
+    /// <returns>All-time counts ordered by count descending and parent URI ascending.</returns>
+    /// <exception cref="MySqlException">The database connection or query fails.</exception>
+    /// <exception cref="OperationCanceledException">The operation is canceled.</exception>
+    /// <exception cref="ObjectDisposedException">The data source has been disposed.</exception>
+    public Task<IReadOnlyList<TopReplyPost>> GetAllRightJerryPostsAsync(
+        CancellationToken cancellationToken = default)
+    {
+        return GetRightJerryPostsAsync(null, cancellationToken);
+    }
+
+    private async Task<IReadOnlyList<TopReplyPost>> GetRightJerryPostsAsync(
+        int? limit, CancellationToken cancellationToken)
     {
         await using var connection = await dataSource.OpenConnectionAsync(cancellationToken);
         await using var command = connection.CreateCommand();
@@ -35,7 +53,7 @@ public sealed class StatisticsStore(MySqlDataSource dataSource, TimeProvider tim
             LIMIT @limit
             """;
         command.Parameters.AddWithValue("@rightJerry", RightJerryDid.ToString());
-        command.Parameters.AddWithValue("@limit", 5);
+        command.Parameters.AddWithValue("@limit", limit.HasValue ? (ulong)limit.Value : ulong.MaxValue);
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
         var posts = new List<TopReplyPost>();
         while (await reader.ReadAsync(cancellationToken))

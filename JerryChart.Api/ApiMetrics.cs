@@ -21,6 +21,7 @@ internal enum StatisticsReport
     ProcessingStatus,
     TopAuthors,
     TopPosts,
+    Posts,
     Authors,
     MonthlyReplies,
     AllTimeMonthlyReplies,

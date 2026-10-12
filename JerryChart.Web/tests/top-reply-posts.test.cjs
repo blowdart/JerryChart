@@ -288,9 +288,10 @@ function componentHarness() {
   let effectIndex = 0;
   const hooks = {
     ...React,
+    useRef(initial) { return { current: initial }; },
     useState(initial) {
       const index = stateIndex++;
-      if (!(index in states)) states[index] = initial;
+      if (!(index in states)) states[index] = typeof initial === "function" ? initial() : initial;
       return [states[index], (value) => {
         states[index] = typeof value === "function" ? value(states[index]) : value;
       }];
@@ -303,12 +304,15 @@ function componentHarness() {
       }
     },
   };
-  const { TopReplyPosts } = modules({ react: hooks })("components\\top-reply-posts.tsx");
+  const { TopReplyPosts } = modules({
+    react: hooks,
+    "@/components/statistics-dialog": { StatisticsDialog: ({ trigger }) => trigger },
+  })("components\\top-reply-posts.tsx");
   let tree;
   return {
-    render(posts = ranking) {
+    render(posts = ranking, expanded = false, postCache) {
       stateIndex = effectIndex = 0;
-      tree = TopReplyPosts({ posts });
+      tree = TopReplyPosts({ posts, expanded, postCache });
       return renderToStaticMarkup(tree);
     },
     commit() {
@@ -328,13 +332,75 @@ function componentHarness() {
           node.props.onClick();
           return true;
         }
-        return visit(node.props.children);
+        return visit(node.props.children) || visit(node.props.trigger);
       }
       assert.ok(visit(tree), "The error must expose a retry button.");
     },
     unmount() { for (const effect of effects) effect.cleanup?.(); },
   };
 }
+
+test("expanded rankings show completed batches before later requests finish and retain them on failure", async (context) => {
+  const posts = Array.from({ length: 12 }, (_, index) => ({
+    atUri: uri(`batch${String(index).padStart(2, "0")}`), replyCount: 12 - index,
+  }));
+  const { isAllReplyPostList } = modules()("lib\\reply-posts.ts");
+  assert.ok(isAllReplyPostList(posts));
+  assert.ok(!isReplyPostList(posts));
+  const requests = [];
+  replaceFetch(context, (url) => new Promise((resolve) => {
+    requests.push({ uris: new URL(url).searchParams.getAll("uris"), resolve });
+  }));
+  const harness = componentHarness();
+  harness.render(posts, true);
+  harness.commit();
+  assert.equal(requests.length, 1);
+  requests[0].resolve(response({ posts: requests[0].uris.slice(0, 4).map((uri) => ({
+    uri, author: { did: rightJerryDid }, record: { text: "First batch text" },
+  })) }));
+  await settle();
+  let markup = harness.render(posts, true);
+  assert.match(markup, /First batch text/);
+  assert.match(markup, /Post unavailable/);
+  assert.match(markup, /Loading Bluesky posts/);
+  assert.equal(requests.length, 2);
+  assert.deepEqual(requests.map((request) => request.uris.length), [5, 5]);
+  requests[1].resolve(response({}, 429));
+  await settle();
+  markup = harness.render(posts, true);
+  assert.match(markup, /First batch text/);
+  assert.match(markup, /Post text could not be loaded/);
+  assert.match(markup, /Unable to load post text/);
+  assert.equal(requests.length, 2);
+  harness.unmount();
+});
+
+test("expanded post text cache survives remount, skips completed batches and invalidates changed rankings", async (context) => {
+  const cache = new Map();
+  let calls = 0;
+  replaceFetch(context, async (url) => {
+    calls++;
+    return response({ posts: new URL(url).searchParams.getAll("uris").map((uri) => ({
+      uri, author: { did: rightJerryDid }, record: { text: "Cached post text" },
+    })) });
+  });
+  let harness = componentHarness();
+  harness.render(ranking, true, cache);
+  harness.commit();
+  await settle();
+  assert.equal(calls, 1);
+  harness.unmount();
+  harness = componentHarness();
+  assert.match(harness.render(ranking, true, cache), /Cached post text/);
+  harness.commit();
+  await settle();
+  assert.equal(calls, 1);
+  harness.render([...ranking, { atUri: uri("ddd"), replyCount: 1 }], true, cache);
+  harness.commit();
+  await settle();
+  assert.equal(calls, 2);
+  harness.unmount();
+});
 
 test("ranking validation rejects invalid identity, counts, duplicates, ordering and length", () => {
   assert.ok(isReplyPostList([]));

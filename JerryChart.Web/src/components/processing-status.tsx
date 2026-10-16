@@ -208,38 +208,6 @@ export function ProcessingStatus({ initial }: { initial: InitialStatus }) {
           <p>
             Jetstream heartbeat: <LocalizedTime timestamp={snapshot?.monitor.activity.heartbeatAt ?? null} />
           </p>
-          {queue && <>
-            <h3 className="pt-2 font-medium text-foreground">Parent-URI backfill</h3>
-            <p>{activityOutcome(queue.activity, snapshot?.observedAt ?? "", elapsed)}</p>
-            <p>Activity started:{" "}
-              {queue.activity.startedAt
-                ? <LocalizedTime timestamp={queue.activity.startedAt} />
-                : "not recorded (never run)."}
-            </p>
-            <p>Activity finished:{" "}
-              {queue.activity.finishedAt
-                ? <LocalizedTime timestamp={queue.activity.finishedAt} />
-                : queue.activity.phase === "not-started"
-                  ? "not recorded (never run)."
-                  : queue.activity.isRunning
-                    ? "not recorded (still active)."
-                    : "not recorded (no completion time is available)."}
-            </p>
-            {queue.activity.heartbeatAt && <p>
-              Parent-URI heartbeat: <LocalizedTime timestamp={queue.activity.heartbeatAt} />
-            </p>}
-            {showParentUris && snapshot && <>
-              <p><strong>Parent URIs:</strong>{" "}
-                {activityMessage(queue.activity, snapshot.observedAt, elapsed)}
-              </p>
-              <p>
-                {queue.pending + queue.retryPending === 0 ? "No outstanding parent-URI rows." :
-                  `${format(queue.pending + queue.retryPending)} parent-URI rows remaining.`}{" "}
-                {format(queue.pending)} pending; {format(queue.retryPending)} retryable ({format(queue.retryDue)} due);{" "}
-                {format(queue.resolved)} resolved; {format(queue.unavailable)} unavailable (not retried).
-              </p>
-            </>}
-          </>}
           <h3 className="pt-2 font-medium text-foreground">Handle refresh</h3>
           {handles && snapshot ? <>
             <p>{activityOutcome(handles.activity, snapshot.observedAt, elapsed)}</p>
@@ -260,6 +228,40 @@ export function ProcessingStatus({ initial }: { initial: InitialStatus }) {
               {handles.nextDueAt ? <LocalizedTime timestamp={handles.nextDueAt} /> : "none (empty queue)"}.
             </p>
           </> : <p>Handle refresh activity is unknown; no status snapshot is available.</p>}
+          {queue && <>
+            <h3 className="pt-2 font-medium text-foreground">Manual parent-URI repair</h3>
+            <p>Runs only when an operator starts the repair command; no automatic worker is expected.</p>
+            <p>Last recorded repair: {activityOutcome(queue.activity, snapshot?.observedAt ?? "", elapsed)}</p>
+            <p>Activity started:{" "}
+              {queue.activity.startedAt
+                ? <LocalizedTime timestamp={queue.activity.startedAt} />
+                : "not recorded (never run)."}
+            </p>
+            <p>Activity finished:{" "}
+              {queue.activity.finishedAt
+                ? <LocalizedTime timestamp={queue.activity.finishedAt} />
+                : queue.activity.phase === "not-started"
+                  ? "not recorded (never run)."
+                  : queue.activity.isRunning
+                    ? "not recorded (still active)."
+                    : "not recorded (no completion time is available)."}
+            </p>
+            {queue.activity.heartbeatAt &&
+              (queue.activity.phase === "backfill-running" || queue.activity.phase === "retrying") && <p>
+              Repair heartbeat (active run only): <LocalizedTime timestamp={queue.activity.heartbeatAt} />
+            </p>}
+            {showParentUris && snapshot && <>
+              <p><strong>Parent URIs:</strong>{" "}
+                {activityMessage(queue.activity, snapshot.observedAt, elapsed)}
+              </p>
+              <p>
+                {queue.pending + queue.retryPending === 0 ? "No outstanding parent-URI rows." :
+                  `${format(queue.pending + queue.retryPending)} parent-URI rows remaining.`}{" "}
+                {format(queue.pending)} pending; {format(queue.retryPending)} retryable ({format(queue.retryDue)} due);{" "}
+                {format(queue.resolved)} resolved; {format(queue.unavailable)} unavailable (not retried).
+              </p>
+            </>}
+          </>}
           <p aria-live="off" className="pt-2 text-right text-xs">
             {refreshDisplay.kind === "refreshing"
               ? "Refreshing status..."

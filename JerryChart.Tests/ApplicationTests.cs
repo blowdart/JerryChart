@@ -122,7 +122,8 @@ public sealed partial class ApplicationTests
             Assert.DoesNotContain("checkpointJson", json);
         }
         await VerifyProcessingStatusAsync(connectionString, cancellationToken);
-        await VerifyScheduledBackfillAsync(connectionString, cancellationToken);
+        await VerifyManualBackfillInvocationAsync(connectionString, cancellationToken);
+        await VerifyOperatorJobsAsync(connectionString, cancellationToken);
         await VerifyActorUpdaterStartupAsync(connectionString, cancellationToken);
         await VerifyMonitorStorageAsync(connectionString, cancellationToken);
         await VerifyActorExclusionsAsync(connectionString, cancellationToken);
@@ -461,34 +462,32 @@ public sealed partial class ApplicationTests
             "The awaited heartbeat must not outlive a completed worker.");
     }
 
-    private static async Task VerifyScheduledBackfillAsync(string connectionString, CancellationToken cancellationToken)
+    private static async Task VerifyManualBackfillInvocationAsync(string connectionString, CancellationToken cancellationToken)
     {
         var options = new MySqlConnectionStringBuilder(connectionString) { Pooling = false };
         await using (var admin = new MySqlConnection(options.ConnectionString))
         {
             await admin.OpenAsync(cancellationToken);
             await using MySqlCommand create = admin.CreateCommand();
-            create.CommandText = "CREATE DATABASE scheduled_backfill_test";
+            create.CommandText = "CREATE DATABASE manual_backfill_test";
             await create.ExecuteNonQueryAsync(cancellationToken);
         }
 
-        options.Database = "scheduled_backfill_test";
+        options.Database = "manual_backfill_test";
         await using MySqlDataSource source = new MySqlDataSourceBuilder(options.ConnectionString).Build();
         await using MySqlConnection connection = await source.OpenConnectionAsync(cancellationToken);
         await MonitorSchema.InitializeAsync(connection, cancellationToken);
         var statusStore = new ProcessingStatusStore(source, TimeProvider.System);
-        var log = new ScheduledBackfillLogger();
         var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        var clients = new List<ScheduledBackfillHandler>();
+        var clients = new List<ManualBackfillHandler>();
         bool fail = false;
         HostApplicationBuilder builder = Host.CreateApplicationBuilder();
         builder.Logging.ClearProviders();
-        builder.Logging.AddProvider(log);
         builder.Services.AddSingleton(source);
         builder.Services.AddSingleton(TimeProvider.System);
         builder.Services.AddSingleton<Func<HttpClient>>(() =>
         {
-            var handler = new ScheduledBackfillHandler(async token =>
+            var handler = new ManualBackfillHandler(async token =>
             {
                 if (fail)
                 {
@@ -497,17 +496,17 @@ public sealed partial class ApplicationTests
 
                 entered.TrySetResult();
                 await Task.Delay(Timeout.InfiniteTimeSpan, token);
-                throw new AssertFailedException("Blocked request should be canceled by host shutdown.");
+                throw new AssertFailedException("Blocked request should be canceled by the operator.");
             });
             clients.Add(handler);
             return new HttpClient(handler);
         });
-        builder.Services.AddParentUriBackfillScheduler();
+        builder.Services.AddTransient<ParentUriBackfillInvocation>();
         using IHost host = builder.Build();
-        ScheduledParentUriBackfill scheduler = host.Services.GetRequiredService<ScheduledParentUriBackfill>();
-        await scheduler.InvokeAsync(cancellationToken);
+        ParentUriBackfillInvocation invocation = host.Services.GetRequiredService<ParentUriBackfillInvocation>();
+        await invocation.RunAsync(cancellationToken);
         Assert.AreEqual("completed", (await statusStore.GetAsync(cancellationToken)).ParentUriBackfill.Activity.State);
-        Assert.AreEqual(0, clients[0].Calls, "An empty scheduled queue must not access the public AppView.");
+        Assert.AreEqual(0, clients[0].Calls, "An empty manual queue must not access the public AppView.");
         Assert.IsTrue(clients[0].Disposed);
 
         await using (var manualOwner = new MySqlConnection(options.ConnectionString))
@@ -518,12 +517,8 @@ public sealed partial class ApplicationTests
                 "parent-uri-backfill", "backfill-running", ":parent-uri-backfill", manualOwner,
                 TimeProvider.System, cancellationToken);
             WorkerActivity before = (await statusStore.GetAsync(cancellationToken)).ParentUriBackfill.Activity;
-            await scheduler.InvokeAsync(cancellationToken);
-            Assert.AreEqual(1, log.Skipped);
-            Assert.AreEqual(before, (await statusStore.GetAsync(cancellationToken)).ParentUriBackfill.Activity,
-                "A skipped schedule must not overwrite the manual owner's status.");
             await Assert.ThrowsAsync<InvalidOperationException>(() =>
-                host.Services.GetRequiredService<ParentUriBackfillInvocation>().RunAsync(false, cancellationToken));
+                invocation.RunAsync(cancellationToken));
             Assert.AreEqual(before, (await statusStore.GetAsync(cancellationToken)).ParentUriBackfill.Activity);
             Assert.IsTrue(clients.All(client => client.Disposed));
             await manual.FinishAsync("stopped");
@@ -532,25 +527,24 @@ public sealed partial class ApplicationTests
         await using MySqlCommand command = connection.CreateCommand();
         command.CommandText = """
                     INSERT INTO Hits (AtUriHash, AtUri, CreatedAt, AuthorDid, ParentAuthorDid)
-                    VALUES (UNHEX(SHA2('scheduled', 256)), 'at://did:plc:reply/app.bsky.feed.post/scheduled',
+                    VALUES (UNHEX(SHA2('manual', 256)), 'at://did:plc:reply/app.bsky.feed.post/manual',
                         UTC_TIMESTAMP(6), 'did:plc:reply', 'did:plc:parent')
                     """;
         await command.ExecuteNonQueryAsync(cancellationToken);
-        Task running = scheduler.InvokeAsync(cancellationToken);
+        using var shutdown = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        Task running = invocation.RunAsync(shutdown.Token);
         try
         {
             await entered.Task.WaitAsync(TimeSpan.FromSeconds(5), cancellationToken);
             Assert.AreEqual("backfill-running", (await statusStore.GetAsync(cancellationToken)).ParentUriBackfill.Activity.State);
-            int allocated = clients.Count;
-            await scheduler.InvokeAsync(cancellationToken);
-            Assert.HasCount(allocated, clients, "The background service must suppress overlapping invocations.");
             await Assert.ThrowsAsync<InvalidOperationException>(() =>
-                host.Services.GetRequiredService<ParentUriBackfillInvocation>().RunAsync(false, cancellationToken));
+                host.Services.GetRequiredService<ParentUriBackfillInvocation>().RunAsync(cancellationToken));
         }
         finally
         {
-            host.Services.GetRequiredService<IHostApplicationLifetime>().StopApplication();
-            await running.WaitAsync(TimeSpan.FromSeconds(10), cancellationToken);
+            await shutdown.CancelAsync();
+            await Assert.ThrowsAsync<OperationCanceledException>(() =>
+                running.WaitAsync(TimeSpan.FromSeconds(10), cancellationToken));
         }
 
         Assert.AreEqual("stopped", (await statusStore.GetAsync(cancellationToken)).ParentUriBackfill.Activity.State);
@@ -559,22 +553,16 @@ public sealed partial class ApplicationTests
         {
             await released.OpenAsync(cancellationToken);
             Assert.IsTrue(await new ParentUriBackfillStore(released).TryInitializeAsync(cancellationToken),
-                "Host cancellation must release the dedicated database advisory lock.");
+                "Operator cancellation must release the dedicated database advisory lock.");
         }
 
-        // A later invocation still uses the same entrypoint and reports known failures without killing scheduling.
-        using IHost freshHost = Host.CreateApplicationBuilder().Build();
         fail = true;
-        ParentUriBackfillInvocation invocation = host.Services.GetRequiredService<ParentUriBackfillInvocation>();
-        var next = new ScheduledParentUriBackfill(invocation,
-            freshHost.Services.GetRequiredService<IHostApplicationLifetime>(), log, TimeProvider.System);
-        await next.InvokeAsync(cancellationToken);
+        await Assert.ThrowsAsync<HttpRequestException>(() => invocation.RunAsync(cancellationToken));
         Assert.AreEqual("failure", (await statusStore.GetAsync(cancellationToken)).ParentUriBackfill.Activity.State);
-        Assert.AreEqual(1, log.Failed);
         Assert.IsTrue(clients.All(client => client.Disposed));
         command.CommandText = "UPDATE Hits SET ParentUriBackfillStatus = 2";
         await command.ExecuteNonQueryAsync(cancellationToken);
-        await next.InvokeAsync(cancellationToken);
+        await invocation.RunAsync(cancellationToken);
         ParentUriProcessingStatus completed = (await statusStore.GetAsync(cancellationToken)).ParentUriBackfill;
         Assert.AreEqual("completed", completed.Activity.State);
         Assert.AreEqual(1L, completed.Unavailable);
@@ -582,7 +570,7 @@ public sealed partial class ApplicationTests
         Assert.IsTrue(clients[^1].Disposed);
     }
 
-    private sealed class ScheduledBackfillHandler(Func<CancellationToken, Task<HttpResponseMessage>> send)
+    private sealed class ManualBackfillHandler(Func<CancellationToken, Task<HttpResponseMessage>> send)
         : HttpMessageHandler
     {
         internal int Calls { get; private set; }
@@ -600,29 +588,6 @@ public sealed partial class ApplicationTests
         }
     }
 
-    private sealed class ScheduledBackfillLogger : ILoggerProvider, ILogger<ScheduledParentUriBackfill>
-    {
-        internal int Skipped { get; private set; }
-        internal int Failed { get; private set; }
-        public ILogger CreateLogger(string categoryName) => this;
-        public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
-        public bool IsEnabled(LogLevel logLevel) => true;
-        public void Log<TState>(LogLevel logLevel, EventId eventId, TState state, Exception? exception,
-            Func<TState, Exception?, string> formatter)
-        {
-            if (eventId.Id == 30)
-            {
-                Skipped++;
-            }
-
-            if (eventId.Id == 23)
-            {
-                Failed++;
-            }
-        }
-
-        public void Dispose() { }
-    }
     private static async Task WaitForHeartbeatAsync(ProcessingStatusStore store, DateTimeOffset expected,
         CancellationToken cancellationToken)
     {
@@ -882,13 +847,13 @@ public sealed partial class ApplicationTests
             Assert.IsTrue(reader.GetInt64(2) is >= 0 and <= 1);
         }
 
-        using var retryHttp = new HttpClient(new StubHandler(_ => Json(new
+        using var retryHttp = new HttpClient(new StubHandler(request => Json(new
         {
             posts = new[]
             {
                 new { uri = availableHit, record = ParentPostRecord(expectedParent) },
                 new { uri = retryHit, record = ParentPostRecord(expectedParent) }
-            }
+            }.Where(post => request.RequestUri!.Query.Contains(Uri.EscapeDataString(post.uri), StringComparison.Ordinal)).ToArray()
         })));
         var retryClient = new ParentPostClient(retryHttp);
         await new ParentUriBackfiller(dataSource, retryClient, NullLogger.Instance)

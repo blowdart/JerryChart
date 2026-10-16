@@ -9,4 +9,5 @@ namespace JerryChart.Monitor;
 
 [JsonSerializable(typeof(SnapshotCheckpoint))]
 [JsonSerializable(typeof(MonitorProgress))]
+[JsonSerializable(typeof(string[]))]
 internal sealed partial class ReplayJsonContext : JsonSerializerContext;

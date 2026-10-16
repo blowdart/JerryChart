@@ -535,16 +535,37 @@ test("client hides the parent-URI section when there are no outstanding rows", (
   assert.doesNotMatch(html, /Parent URIs:|parent-URI rows/);
   assert.doesNotMatch(html, /run completed|in progress/);
   const details = html.match(/<dialog\b[\s\S]*?<\/dialog>/)?.[0];
-  assert.match(details, /Parent-URI backfill/);
+  assert.match(details, /Manual parent-URI repair/);
   assert.match(details, /Activity started: not recorded \(never run\)\./);
   assert.match(details, /Activity finished: not recorded \(never run\)\./);
-  assert.match(details, /Parent-URI backfill<\/h3><p>Never run\.<\/p><p>Activity started:/);
-  assert.doesNotMatch(details.slice(details.indexOf("Parent-URI backfill"), details.indexOf("Handle refresh")), /Outcome:/);
+  assert.match(details, /Last recorded repair: Never run\./);
+  assert.match(details, /no automatic worker is expected/);
+  assert.doesNotMatch(details.slice(details.indexOf("Manual parent-URI repair")), /Outcome:|Repair heartbeat/);
   component.commit();
   component.unmount();
 });
 
-test("handle refresh details follow parent backfill, precede refresh note, and never expand the compact summary", (context) => {
+for (const phase of ["completed", "stopped", "failure", "backfill-running", "retrying"]) {
+  test(`manual repair shows historical ${phase} status without implying an idle worker is dead`, (context) => {
+    const component = harness(context);
+    const initial = { status: status("live", phase), error: null };
+    initial.status.parentUriBackfill.activity.heartbeatAt = "2026-10-04T12:00:00Z";
+    const html = component.render(initial);
+    const repair = html.slice(html.indexOf("Manual parent-URI repair"));
+    assert.match(repair, /Runs only when an operator starts the repair command; no automatic worker is expected/);
+    if (phase === "backfill-running" || phase === "retrying") {
+      assert.match(repair, /Activity stale; the run may have been interrupted/);
+      assert.match(repair, /Repair heartbeat/);
+    } else {
+      assert.doesNotMatch(repair, /heartbeat|stale|interrupted/i);
+      assert.match(repair, /Last recorded repair: (Completed\.|Stopped before completion\.|Failed\.)/);
+    }
+    component.commit();
+    component.unmount();
+  });
+}
+
+test("manual parent repair follows handle refresh details before the refresh note without expanding the compact summary", (context) => {
   const component = harness(context);
   const initial = { status: status("live", "completed"), error: null };
   initial.status.handleRefresh = {
@@ -555,14 +576,15 @@ test("handle refresh details follow parent backfill, precede refresh note, and n
   const summary = html.slice(0, html.indexOf("<dialog"));
   assert.doesNotMatch(summary, /Handle refresh|refreshes scheduled|rate limit/);
   assert.doesNotMatch(summary, /Heartbeat|heartbeat|♥|parent URIs/);
-  assert.match(details, /Parent-URI backfill[\s\S]*Handle refresh[\s\S]*Next status refresh in 0:30/);
+  assert.match(details, /Jetstream processing[\s\S]*Handle refresh[\s\S]*Manual parent-URI repair[\s\S]*Next status refresh in 0:30/);
   assert.match(details, /aria-live="off" class="pt-2 text-right text-xs"/);
-  assert.doesNotMatch(details.slice(details.indexOf("Handle refresh")), /Activity finished:|Scheduled rows include/);
+  const handleDetails = details.slice(details.indexOf("Handle refresh"), details.indexOf("Manual parent-URI repair"));
+  assert.doesNotMatch(handleDetails, /Activity finished:|Scheduled rows include/);
   assert.match(details, /Handle refresh<\/h3><p>Active \(request pacing \/ rate-limit wait\)\.<\/p>/);
-  assert.doesNotMatch(details.slice(details.indexOf("Handle refresh")), /Outcome:/);
+  assert.doesNotMatch(handleDetails, /Outcome:/);
   assert.match(details, /Handle refresh heartbeat:/);
   assert.match(details, /Jetstream heartbeat:/);
-  assert.match(details, /Parent-URI heartbeat:/);
+  assert.doesNotMatch(details, /Repair heartbeat/);
   assert.match(details, /Last phase change:/);
   assert.match(details, /1,234 refreshes scheduled \(12 due\)/);
   assert.doesNotMatch(details, /queue counts do not prove worker activity/);
@@ -674,8 +696,8 @@ test("client keeps the main Jetstream summary concise and retains the approximat
   assert.doesNotMatch(details, /Jetstream:<\/strong>/);
   assert.match(details, /Activity started: <time dateTime="2026-10-05T12:00:00\+00:00">/);
   assert.match(details, /Activity finished: <time dateTime="2026-10-05T12:00:00\+00:00">/);
-  assert.match(details, /Parent-URI backfill<\/h3><p>Completed\.<\/p><p>Activity started:/);
-  assert.doesNotMatch(details.slice(details.indexOf("Parent-URI backfill"), details.indexOf("Handle refresh")), /Outcome:/);
+  assert.match(details, /Last recorded repair: Completed\.<\/p><p>Activity started:/);
+  assert.doesNotMatch(details.slice(details.indexOf("Manual parent-URI repair")), /Outcome:|Repair heartbeat/);
   assert.match(details, /Next status refresh in 0:30/);
   component.commit();
   component.unmount();
@@ -706,10 +728,10 @@ test("client displays archive stall progress and scheduled retry timestamps with
   assert.match(details, /Next scheduled retry/);
   assert.match(details, /dateTime="2026-10-05T12:05:00Z"/);
   assert.ok(details.indexOf("Next scheduled retry") < details.indexOf("Jetstream heartbeat"));
-  assert.ok(details.indexOf("Jetstream heartbeat") < details.indexOf("Parent-URI backfill"));
+  assert.ok(details.indexOf("Jetstream heartbeat") < details.indexOf("Manual parent-URI repair"));
   assert.doesNotMatch(summary, /Approximate time remaining/);
   assert.doesNotMatch(details, /Approximate time remaining/);
-  assert.match(details, /Parent-URI heartbeat/);
+  assert.match(details, /Repair heartbeat \(active run only\)/);
   assert.match(details, /7 parent-URI rows remaining/);
   assert.match(details, /5 pending; 2 retryable \(1 due\); 3 resolved; 4 unavailable \(not retried\)/);
   component.commit();

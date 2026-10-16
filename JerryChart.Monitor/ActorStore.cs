@@ -45,13 +45,28 @@ internal sealed class ActorStore(MySqlConnection connection)
         await command.ExecuteNonQueryAsync(cancellationToken);
     }
 
-    internal Task SaveAsync(ActorRefreshRequest request, Handle? handle, CancellationToken cancellationToken)
+    internal async Task SaveAsync(ActorRefreshRequest request, Handle? handle, CancellationToken cancellationToken)
     {
-        return SaveResolutionAsync(request, new(handle, null), cancellationToken);
+        await SaveResolutionAsync(request, new(handle, null), cancellationToken);
     }
 
-    internal async Task SaveResolutionAsync(ActorRefreshRequest request, ActorResolution resolution,
-        CancellationToken cancellationToken)
+    internal async Task<ActorRefreshRequest> GetTrackedAsync(Did did, CancellationToken cancellationToken)
+    {
+        await using MySqlCommand command = connection.CreateCommand();
+        command.CommandText = """
+            SELECT r.Revision FROM ActorRefresh r JOIN Actor a ON a.Did = r.Did
+            WHERE r.Did = @did AND NOT EXISTS (SELECT 1 FROM ExcludedActor e WHERE e.Did = r.Did)
+            """;
+        command.Parameters.AddWithValue("@did", did.ToString());
+        object? revision = await command.ExecuteScalarAsync(cancellationToken);
+
+        return revision is null
+            ? throw new InvalidOperationException("The actor is not tracked, has no refresh job, or is excluded.")
+            : new(did, Convert.ToInt64(revision));
+    }
+
+    internal async Task<bool> SaveResolutionAsync(ActorRefreshRequest request, ActorResolution resolution,
+        CancellationToken cancellationToken, bool advanceRevision = false)
     {
         await using MySqlCommand command = connection.CreateCommand();
         // A notification received during HTTP resolution must win over the stale response.
@@ -60,7 +75,8 @@ internal sealed class ActorStore(MySqlConnection connection)
             SET a.UpdatedAt = UTC_TIMESTAMP(6),
                 a.Handle = @handle,
                 a.AccountStatus = @status,
-                r.NextAttemptAt = TIMESTAMPADD(SECOND, @seconds, UTC_TIMESTAMP(6))
+                r.NextAttemptAt = TIMESTAMPADD(SECOND, @seconds, UTC_TIMESTAMP(6)),
+                r.Revision = r.Revision + @advance
             WHERE r.Did = @did AND r.Revision = @revision
             """;
         command.Parameters.AddWithValue("@did", request.Did.ToString());
@@ -68,7 +84,8 @@ internal sealed class ActorStore(MySqlConnection connection)
         command.Parameters.AddWithValue("@handle", resolution.Handle?.ToString());
         command.Parameters.AddWithValue("@status", resolution.AccountStatus);
         command.Parameters.AddWithValue("@seconds", resolution.RefreshSeconds);
+        command.Parameters.AddWithValue("@advance", advanceRevision ? 1 : 0);
 
-        await command.ExecuteNonQueryAsync(cancellationToken);
+        return await command.ExecuteNonQueryAsync(cancellationToken) > 0;
     }
 }

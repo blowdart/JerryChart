@@ -15,10 +15,10 @@ internal sealed class ParentUriBackfillInvocation(
     TimeProvider clock,
     Func<HttpClient>? createClient = null)
 {
-    internal async Task RunAsync(bool scheduled, CancellationToken cancellationToken)
+    internal async Task RunAsync(CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        BackfillTrigger trigger = scheduled ? BackfillTrigger.Scheduled : BackfillTrigger.Manual;
+        const BackfillTrigger trigger = BackfillTrigger.Manual;
         long started = Stopwatch.GetTimestamp();
         MonitorMetrics.Backfill(trigger, BackfillOutcome.Started);
         BackfillOutcome outcome = BackfillOutcome.Failed;
@@ -26,9 +26,9 @@ internal sealed class ParentUriBackfillInvocation(
         {
             using HttpClient httpClient = createClient?.Invoke() ?? MonitorHttpClients.CreateAppViewClient();
             var client = new ParentPostClient(httpClient);
-            var backfiller = new ParentUriBackfiller(dataSource, client, logger, clock, skipIfLocked: scheduled);
+            var backfiller = new ParentUriBackfiller(dataSource, client, logger, clock);
             await backfiller.RunAsync(cancellationToken);
-            outcome = backfiller.Skipped ? BackfillOutcome.Skipped : BackfillOutcome.Completed;
+            outcome = BackfillOutcome.Completed;
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {

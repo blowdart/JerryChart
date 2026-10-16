@@ -31,8 +31,8 @@ public sealed class MonitorHostBuilderTests
             using IHost host = configuration.Builder.Build();
             Assert.DoesNotContain(service => service is ActorHandleUpdater, host.Services.GetServices<IHostedService>(),
                 "Backfill configuration must not register the actor updater.");
-            Assert.IsNull(host.Services.GetService<ScheduledParentUriBackfill>(),
-                "The manual backfill command must not register or start the daily scheduler.");
+            Assert.IsNull(host.Services.GetService<ParentUriBackfillInvocation>(),
+                "The manual repair command creates its invocation explicitly, not as a hosted worker.");
         }
         finally
         {

@@ -144,6 +144,10 @@ A global Aspire CLI installation is **not required** for this option.
 
 Open the dashboard URL printed by Aspire, then open the **web** endpoint.
 The API appears in the dashboard as **api**, and the command-line app as **monitor**.
+The frontend disables Turbopack's persistent development cache to avoid the
+[Next.js 16.4 restart/HMR reload loop](https://github.com/vercel/next.js/issues/100251)
+when Aspire probes `/health` before an existing browser tab reconnects.
+Development restarts compile from scratch; production build caching is unchanged.
 Aspire runs `npm ci` automatically, starts MySQL, injects connection strings
 into both .NET apps, and supplies the API URL to Next.js as `API_BASE_URL`.
 The API waits for MySQL readiness and initializes the shared monitoring schema;
@@ -231,7 +235,14 @@ retained active snapshots age into stale locally. The existing manual statistics
 Refresh still has its **150-second cooldown**, refreshes server-provided status
 too, and is not invoked by heartbeat polling.
 
-MySQL data is retained in an Aspire-managed Docker volume between runs. The
+MySQL data is retained in the explicitly named Docker volume
+`jerrychart-mysql-data` between runs, independent of checkout/worktree paths.
+Checkouts using the same Docker engine share this database; run only one
+JerryChart orchestration against it at a time. Existing path-derived volumes
+must be copied while MySQL is stopped before switching to this name; otherwise
+Docker creates an empty database volume. Preserve the original volume until the
+migration has been verified. Integration tests continue to use isolated,
+ephemeral storage rather than this development volume. The
 `mysql-password` secret parameter supplies the container's root password. Aspire
 includes that password in the connection strings supplied to both .NET apps;
 do not commit credentials. For an existing initialized volume, configure its

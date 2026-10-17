@@ -1,8 +1,10 @@
 <Project>
   <PropertyGroup>
     <ManagePackageVersionsCentrally>true</ManagePackageVersionsCentrally>
+    <CentralPackageTransitivePinningEnabled>true</CentralPackageTransitivePinningEnabled>
   </PropertyGroup>
   <ItemGroup>
+    <PackageVersion Include="MessagePack" Version="2.5.307" />
     <PackageVersion Include="SonarAnalyzer.CSharp" Version="10.35.0.4138" />
     <PackageVersion Include="System.CommandLine" Version="2.0.12" />
     <PackageVersion Include="Microsoft.Extensions.Telemetry.Abstractions" Version="10.10.0" />

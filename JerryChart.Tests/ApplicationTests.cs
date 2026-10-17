@@ -882,14 +882,19 @@ public sealed partial class ApplicationTests
             Assert.IsTrue(reader.GetInt64(2) is >= 0 and <= 1);
         }
 
-        using var retryHttp = new HttpClient(new StubHandler(_ => Json(new
+        // Retry times are written per row, so the rows can become due in separate batches. Like the real
+        // AppView, answer only for the URIs that were actually requested.
+        using var retryHttp = new HttpClient(new StubHandler(request =>
         {
-            posts = new[]
+            string[] requested = System.Web.HttpUtility.ParseQueryString(request.RequestUri!.Query).GetValues("uris") ?? [];
+            return Json(new
             {
-                new { uri = availableHit, record = ParentPostRecord(expectedParent) },
-                new { uri = retryHit, record = ParentPostRecord(expectedParent) }
-            }
-        })));
+                posts = new[] { availableHit, retryHit }
+                    .Where(uri => requested.Contains(uri, StringComparer.Ordinal))
+                    .Select(uri => new { uri, record = ParentPostRecord(expectedParent) })
+                    .ToArray()
+            });
+        }));
         var retryClient = new ParentPostClient(retryHttp);
         await new ParentUriBackfiller(dataSource, retryClient, NullLogger.Instance)
             .RunAsync(cancellationToken);
@@ -1055,6 +1060,27 @@ public sealed partial class ApplicationTests
                 store.SaveRetryTimesAsync([due[0], missing], TimeSpan.Zero, cancellationToken));
             Assert.IsNull(await store.GetNextRetryAtAsync(cancellationToken),
                 "A failed retry batch must not leave partial durable cooldowns.");
+
+            var clock = new Microsoft.Extensions.Time.Testing.FakeTimeProvider(
+                new DateTimeOffset(2030, 1, 1, 0, 0, 0, TimeSpan.Zero));
+            var timedStore = new ParentUriBackfillStore(connection, clock);
+            await timedStore.SaveRetryTimesAsync(due, TimeSpan.FromSeconds(30), cancellationToken);
+            Assert.AreEqual(clock.GetUtcNow().UtcDateTime.AddSeconds(30), await timedStore.GetNextRetryAtAsync(cancellationToken),
+                "Retry times must come from the injected clock.");
+            Assert.IsEmpty(await timedStore.GetDueBatchAsync(cancellationToken));
+            clock.Advance(TimeSpan.FromSeconds(29));
+            Assert.IsEmpty(await timedStore.GetDueBatchAsync(cancellationToken));
+            clock.Advance(TimeSpan.FromSeconds(1));
+            Assert.HasCount(3, await timedStore.GetDueBatchAsync(cancellationToken),
+                "Every row in a retried batch must become due together.");
+            await using (MySqlCommand reset = connection.CreateCommand())
+            {
+                reset.CommandText = """
+                    UPDATE Hits SET ParentUriBackfillStatus = 0, ParentUriBackfillAttemptCount = 0,
+                        ParentUriBackfillNextAttemptAt = UTC_TIMESTAMP(6)
+                    """;
+                await reset.ExecuteNonQueryAsync(cancellationToken);
+            }
 
             await using var competitor = new MySqlConnection(connectionString);
             await competitor.OpenAsync(cancellationToken);

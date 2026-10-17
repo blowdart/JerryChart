@@ -252,6 +252,14 @@ delete the volume to change a password, as it contains hits and replay progress.
 The shared schema removes the obsolete `notes` table at startup; hits, actors,
 refresh jobs, and replay checkpoints are preserved.
 
+AppHost starts MySQL with `--skip-log-bin` because this local database does not
+use replication or binary-log-based point-in-time recovery. InnoDB redo logging
+and crash recovery remain enabled. This takes effect on the next container
+restart and does not purge existing binary logs. Before restarting an existing
+database, use `SHOW BINARY LOG STATUS;` and
+`PURGE BINARY LOGS TO '<current File value>';` to safely remove older logs while
+binary logging is still enabled; never delete MySQL log files directly.
+
 For an HTTP-only dashboard, use either:
 
 ```powershell

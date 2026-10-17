@@ -6,6 +6,7 @@ IDistributedApplicationBuilder builder = DistributedApplication.CreateBuilder(ar
 IResourceBuilder<ParameterResource> mysqlPassword = builder.AddParameter("mysql-password", secret: true);
 IResourceBuilder<MySqlDatabaseResource> database = builder.AddMySql("mysql", password: mysqlPassword)
     .WithImageTag("8.4")
+    .WithArgs("--skip-log-bin")
     .WithDataVolume("jerrychart-mysql-data")
     .AddDatabase("jerrychart");
 

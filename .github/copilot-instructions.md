@@ -80,7 +80,7 @@ the blocker rather than claiming the gate passed.
 * **Documentation.** Update directly related README guidance when behavior or configuration changes. There is no package-grouped changelog or PublicAPI ledger to maintain.
 * **Targeting and trimming.** API, Monitor, Data, and ServiceDefaults are AOT-compatible. Keep changes trimming-safe, use configuration/source generators, and validate native publish when changing AOT-sensitive code or dependencies.
 * **Internal APIs.** API and Monitor expose internals to `JerryChart.Tests` through project configuration. Prefer internal implementation types rather than unnecessary public surface.
-* **Configuration.** Preserve central package versions in `Directory.Packages.props` and package source mappings in `nuget.config`. AT Protocol/Bluesky prereleases come from the configured MyGet feed.
+* **Configuration.** Preserve central package versions in `Directory.Packages.props` and package source mappings in `nuget.config`. Stable AT Protocol/Bluesky packages come from nuget.org.
 * **Infrastructure.** Do not change `.editorconfig`, SDK selection, shared build configuration, package feeds, or workflow policy incidentally. Change them only when requested or directly required by the task, and explain meaningful changes.
 * **Secrets.** Use user secrets or environment/platform secret stores. Never commit credentials or real connection strings.
 * **Errors.** Preserve diagnostic logs and propagate unexpected failures. Do not hide failures with broad catches, silent defaults, or success-shaped fallback results.

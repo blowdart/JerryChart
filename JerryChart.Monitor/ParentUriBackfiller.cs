@@ -12,19 +12,16 @@ internal sealed class ParentUriBackfiller(
     ParentPostClient client,
     ILogger logger,
     TimeProvider? timeProvider = null,
-    Func<TimeSpan, CancellationToken, Task>? wait = null,
-    bool skipIfLocked = false)
+    Func<TimeSpan, CancellationToken, Task>? wait = null)
 {
     private readonly TimeProvider _clock = timeProvider ?? TimeProvider.System;
     private readonly Func<TimeSpan, CancellationToken, Task> _delay =
         wait ?? ((duration, token) => Task.Delay(duration, token));
 
     private ProcessingActivity? _lastActivity;
-    internal bool Skipped { get; private set; }
 
     internal async Task RunAsync(CancellationToken cancellationToken)
     {
-        Skipped = false;
         try
         {
             await BackfillDatabaseRetry.RunAsync(RunAttemptAsync, logger, _delay, cancellationToken);
@@ -44,19 +41,7 @@ internal sealed class ParentUriBackfiller(
         await using var connection = new MySqlConnection(options.ConnectionString);
         await connection.OpenAsync(cancellationToken);
         var store = new ParentUriBackfillStore(connection, _clock);
-        if (skipIfLocked)
-        {
-            if (!await store.TryInitializeAsync(cancellationToken))
-            {
-                MonitorLog.ScheduledParentUriBackfillSkipped(logger);
-                Skipped = true;
-                return;
-            }
-        }
-        else
-        {
-            await store.InitializeAsync(cancellationToken);
-        }
+        await store.InitializeAsync(cancellationToken);
         await using ProcessingActivity activity = await ProcessingActivity.StartAsync(dataSource, logger, "parent-uri-backfill",
             "backfill-running", ":parent-uri-backfill", connection, _clock, cancellationToken);
         _lastActivity = activity;
@@ -115,7 +100,7 @@ internal sealed class ParentUriBackfiller(
             persisted();
             int resolved = results.Count(result => result.ParentAtUri is not null);
             int unavailable = results.Count - resolved;
-            MonitorMetrics.Posts(skipIfLocked ? BackfillTrigger.Scheduled : BackfillTrigger.Manual, resolved, unavailable);
+            MonitorMetrics.Posts(BackfillTrigger.Manual, resolved, unavailable);
             foreach (ParentUriBackfillResult result in results.Where(result => result.ParentAtUri is null))
             {
                 MonitorLog.ParentPostUnavailable(logger, result.Request.AtUri);

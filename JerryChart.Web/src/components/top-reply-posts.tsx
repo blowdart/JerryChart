@@ -90,7 +90,7 @@ export function TopReplyPosts({ posts, expanded = false, postCache }: {
                 <TableRow>
                   <TableHead scope="col" className="text-center align-middle">Rank</TableHead>
                   <TableHead scope="col">Post</TableHead>
-                  <TableHead scope="col" className="text-right">Replies</TableHead>
+                  <TableHead scope="col" className="text-right">&quot;Jerry no&quot; replies</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>

@@ -499,7 +499,7 @@ test("component renders loading, ranked links, escaped multiline text, unavailab
   assert.match(html, /Loading Bluesky posts/);
   assert.match(html, />Rank</);
   assert.match(html, />Post</);
-  assert.match(html, />Replies</);
+  assert.match(html, />&quot;Jerry no&quot; replies</);
   assert.match(html, />12</);
   assert.match(html, new RegExp(`https://bsky.app/profile/${rightJerryDid}/post/aaa`));
   component.commit();

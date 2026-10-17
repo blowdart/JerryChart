@@ -60,7 +60,6 @@ internal enum ErrorCategory
 
 internal enum BackfillTrigger
 {
-    Scheduled,
     Manual
 }
 
@@ -68,7 +67,6 @@ internal enum BackfillOutcome
 {
     Started,
     Completed,
-    Skipped,
     Canceled,
     Failed
 }

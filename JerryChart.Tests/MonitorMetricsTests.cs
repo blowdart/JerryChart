@@ -36,8 +36,8 @@ public sealed class MonitorMetricsTests
         MonitorMetrics.EventProcessed(EventSource.Live, JetStreamEventKind.Identity, started);
         MonitorMetrics.Retry(MetricOperation.Jetstream, new JsonException("Not a metric label."),
             TimeSpan.FromSeconds(15));
-        MonitorMetrics.Backfill(BackfillTrigger.Scheduled, BackfillOutcome.Started);
-        MonitorMetrics.Backfill(BackfillTrigger.Scheduled, BackfillOutcome.Skipped, started);
+        MonitorMetrics.Backfill(BackfillTrigger.Manual, BackfillOutcome.Started);
+        MonitorMetrics.Backfill(BackfillTrigger.Manual, BackfillOutcome.Completed, started);
         MonitorMetrics.Posts(BackfillTrigger.Manual, 3, 2);
 
         Reading[] events = readings.Where(reading => reading.Name == "jerrychart.jetstream.events.processed").ToArray();
@@ -56,7 +56,7 @@ public sealed class MonitorMetricsTests
         Assert.AreEqual("Json", retry.Tags["error.type"]);
         Assert.AreEqual(1d, readings.Single(reading => reading.Name == "jerrychart.monitor.errors").Value);
         Assert.HasCount(2, readings.Where(reading => reading.Name == "jerrychart.backfill.invocations").ToArray());
-        Assert.AreEqual("Skipped", readings.Single(reading => reading.Name == "jerrychart.backfill.duration.seconds").Tags["outcome"]);
+        Assert.AreEqual("Completed", readings.Single(reading => reading.Name == "jerrychart.backfill.duration.seconds").Tags["outcome"]);
         Assert.AreEqual(3d, readings.Single(reading => reading.Name == "jerrychart.backfill.posts" &&
             reading.Tags["result"] == "Resolved").Value);
         Assert.AreEqual(2d, readings.Single(reading => reading.Name == "jerrychart.backfill.posts" &&
@@ -174,7 +174,7 @@ public sealed class MonitorMetricsTests
         await using MySqlDataSource source = new MySqlDataSourceBuilder("Server=unused.invalid;Database=unused;User ID=unused").Build();
         var failed = new ParentUriBackfillInvocation(source, NullLogger<ParentUriBackfillInvocation>.Instance,
             TimeProvider.System, () => throw new IOException("Secret-shaped text must not be a label."));
-        await Assert.ThrowsAsync<IOException>(() => failed.RunAsync(false, CancellationToken.None));
+        await Assert.ThrowsAsync<IOException>(() => failed.RunAsync(CancellationToken.None));
         using var shutdown = new CancellationTokenSource();
         var canceled = new ParentUriBackfillInvocation(source, NullLogger<ParentUriBackfillInvocation>.Instance,
             TimeProvider.System, () =>
@@ -182,13 +182,13 @@ public sealed class MonitorMetricsTests
                 shutdown.Cancel();
                 throw new OperationCanceledException(shutdown.Token);
             });
-        await Assert.ThrowsAsync<OperationCanceledException>(() => canceled.RunAsync(true, shutdown.Token));
+        await Assert.ThrowsAsync<OperationCanceledException>(() => canceled.RunAsync(shutdown.Token));
         Reading[] invocations = readings.Where(reading => reading.Name == "jerrychart.backfill.invocations").ToArray();
         Assert.HasCount(4, invocations);
         Assert.AreEqual("Started", invocations[0].Tags["outcome"]);
         Assert.AreEqual("Manual", invocations[0].Tags["trigger"]);
         Assert.AreEqual("Failed", invocations[1].Tags["outcome"]);
-        Assert.AreEqual("Scheduled", invocations[2].Tags["trigger"]);
+        Assert.AreEqual("Manual", invocations[2].Tags["trigger"]);
         Assert.AreEqual("Canceled", invocations[3].Tags["outcome"]);
         Assert.HasCount(1, readings.Where(reading => reading.Name == "jerrychart.monitor.errors").ToArray());
         Assert.HasCount(2, readings.Where(reading => reading.Name == "jerrychart.backfill.duration.seconds").ToArray());

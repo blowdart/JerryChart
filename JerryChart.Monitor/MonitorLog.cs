@@ -9,6 +9,15 @@ namespace JerryChart.Monitor;
 
 internal static partial class MonitorLog
 {
+    [LoggerMessage(42, LogLevel.Error, "Operator commands require ConnectionStrings__jerrychart.")]
+    internal static partial void MissingOperatorConnectionString(ILogger logger);
+
+    [LoggerMessage(43, LogLevel.Error, "Operator command failed. The requested operation must not be assumed complete.")]
+    internal static partial void OperatorJobFailed(ILogger logger, Exception exception);
+
+    [LoggerMessage(44, LogLevel.Warning, "Operator command canceled. Its report or refresh may be incomplete.")]
+    internal static partial void OperatorJobCanceled(ILogger logger);
+
     [LoggerMessage(1, LogLevel.Error, "Replay requires Jetstream__ApiKey (or _JetstreamApiKey) and a wss:// Jetstream v2 host.")]
     internal static partial void InvalidConfiguration(ILogger logger);
 
@@ -89,15 +98,6 @@ internal static partial class MonitorLog
 
     [LoggerMessage(29, LogLevel.Error, "Processing worker {Resource} exited its attempt with phase {Phase}.")]
     internal static partial void ProcessingRunFailed(ILogger logger, Exception exception, string resource, string phase);
-
-    [LoggerMessage(30, LogLevel.Information, "Scheduled parent-URI backfill skipped: another invocation owns the database lock.")]
-    internal static partial void ScheduledParentUriBackfillSkipped(ILogger logger);
-
-    [LoggerMessage(31, LogLevel.Information, "Startup or daily parent-URI backfill is due. Attempting the independent database lock.")]
-    internal static partial void ScheduledParentUriBackfillDue(ILogger logger);
-
-    [LoggerMessage(32, LogLevel.Information, "Parent-URI backfill runs once at startup and daily at 03:00 UTC.")]
-    internal static partial void ParentUriBackfillScheduleRegistered(ILogger logger);
 
     [LoggerMessage(34, LogLevel.Information, "Actor {Did} has no resolved handle; relay status {AccountStatus}. Rechecking in {RefreshSeconds} seconds.")]
     internal static partial void ActorInactive(ILogger logger, Did did, string accountStatus, int refreshSeconds);

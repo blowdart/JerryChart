@@ -6,7 +6,8 @@ IDistributedApplicationBuilder builder = DistributedApplication.CreateBuilder(ar
 IResourceBuilder<ParameterResource> mysqlPassword = builder.AddParameter("mysql-password", secret: true);
 IResourceBuilder<MySqlDatabaseResource> database = builder.AddMySql("mysql", password: mysqlPassword)
     .WithImageTag("8.4")
-    .WithDataVolume()
+    .WithArgs("--skip-log-bin")
+    .WithDataVolume("jerrychart-mysql-data")
     .AddDatabase("jerrychart");
 
 IResourceBuilder<ProjectResource> api = builder.AddProject<Projects.JerryChart_Api>("api", launchProfileName: "http")

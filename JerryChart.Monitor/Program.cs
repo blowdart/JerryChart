@@ -18,8 +18,56 @@ using MySqlConnector;
 
 using OpenTelemetry.Metrics;
 
-RootCommand command = MonitorCommand.Create(ExecuteAsync, ExecuteParentUriBackfillAsync, ExecuteExclusionAsync);
+RootCommand command = MonitorCommand.Create(ExecuteAsync, ExecuteParentUriBackfillAsync, ExecuteExclusionAsync,
+    auditThread: (post, token) => ExecuteOperatorJobAsync(async (jobs, cancellation) =>
+    {
+        using HttpClient client = MonitorHttpClients.CreateAppViewClient();
+        return await jobs.AuditThreadAsync(post, client, cancellation);
+    }, token),
+    refreshActor: (did, token) => ExecuteOperatorJobAsync(async (jobs, cancellation) =>
+    {
+        using HttpClient client = MonitorHttpClients.CreateAppViewClient();
+        return await jobs.RefreshActorAsync(did, new ActorProfileClient(client), cancellation);
+    }, token),
+    checkConsistency: token => ExecuteOperatorJobAsync((jobs, cancellation) => jobs.CheckConsistencyAsync(cancellation), token),
+    replayStatus: token => ExecuteOperatorJobAsync((jobs, cancellation) => jobs.ReplayStatusAsync(cancellation), token));
 return await command.Parse(args).InvokeAsync();
+
+static async Task<int> ExecuteOperatorJobAsync(Func<OperatorJobs, CancellationToken, Task<int>> job,
+    CancellationToken cancellationToken)
+{
+    using var configuration = new MonitorHostBuilder();
+    using IHost host = configuration.Builder.Build();
+    ILogger logger = host.Services.GetRequiredService<ILoggerFactory>().CreateLogger("JerryChart.Monitor");
+    string? connectionString = configuration.Builder.Configuration["ConnectionStrings:jerrychart"];
+    if (string.IsNullOrWhiteSpace(connectionString))
+    {
+        MonitorLog.MissingOperatorConnectionString(logger);
+        return 2;
+    }
+
+    try
+    {
+        await host.StartAsync(cancellationToken);
+        await using MySqlDataSource source = new MySqlDataSourceBuilder(connectionString).Build();
+        return await job(new OperatorJobs(source, Console.Out), cancellationToken);
+    }
+    catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+    {
+        MonitorLog.OperatorJobCanceled(logger);
+        return 1;
+    }
+    catch (Exception exception) when (exception is MySqlException or IOException or HttpRequestException
+        or JsonException or ArgumentException or InvalidOperationException or KeyNotFoundException or FormatException)
+    {
+        MonitorLog.OperatorJobFailed(logger, exception);
+        return 1;
+    }
+    finally
+    {
+        await host.StopAsync(CancellationToken.None);
+    }
+}
 
 static async Task<int> ExecuteExclusionAsync(Did did, CancellationToken cancellationToken)
 {
@@ -72,7 +120,6 @@ static async Task<int> ExecuteAsync(CancellationToken cancellationToken)
             .AddAtProtoDirectoryMetrics());
     builder.AddJerryChartDatabase();
     builder.Services.AddHostedService<ActorHandleUpdater>();
-    builder.Services.AddParentUriBackfillScheduler();
 
     string? apiKey = builder.Configuration["Jetstream:ApiKey"] ?? Environment.GetEnvironmentVariable("_JetstreamApiKey");
     string? hostUri = builder.Configuration["Jetstream:Host"];
@@ -150,7 +197,7 @@ static async Task<int> ExecuteParentUriBackfillAsync(CancellationToken cancellat
         await using MySqlDataSource dataSource = new MySqlDataSourceBuilder(connectionString).Build();
         var invocation = new ParentUriBackfillInvocation(dataSource,
             host.Services.GetRequiredService<ILogger<ParentUriBackfillInvocation>>(), TimeProvider.System);
-        await invocation.RunAsync(scheduled: false, cancellationToken);
+        await invocation.RunAsync(cancellationToken);
         return 0;
     }
     catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)

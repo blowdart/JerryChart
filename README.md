@@ -144,6 +144,10 @@ A global Aspire CLI installation is **not required** for this option.
 
 Open the dashboard URL printed by Aspire, then open the **web** endpoint.
 The API appears in the dashboard as **api**, and the command-line app as **monitor**.
+The frontend disables Turbopack's persistent development cache to avoid the
+[Next.js 16.4 restart/HMR reload loop](https://github.com/vercel/next.js/issues/100251)
+when Aspire probes `/health` before an existing browser tab reconnects.
+Development restarts compile from scratch; production build caching is unchanged.
 Aspire runs `npm ci` automatically, starts MySQL, injects connection strings
 into both .NET apps, and supplies the API URL to Next.js as `API_BASE_URL`.
 The API waits for MySQL readiness and initializes the shared monitoring schema;
@@ -162,9 +166,12 @@ configuration or database credentials in client code are needed.
 ### Processing activity
 
 The homepage shows Jetstream historical replay/live monitoring, the
-parent-URI backfill (daily scheduled or manual), and the independent continuous
+manual parent-URI repair status, and the independent continuous
 handle updater in the processing **details** dialog, independently of chart refreshes. The compact
 Jetstream summary is unchanged; standalone heartbeat timestamps are shown only in details.
+Manual repair is explicitly labeled as operator-initiated, with its last recorded
+outcome retained; its heartbeat is shown only for an active or interrupted run,
+not for a finished repair that is no longer expected to send heartbeats.
 The uncached
 `GET /statistics/processing-status` endpoint (and the browser's same-origin
 `/api/statistics/processing-status` proxy) reports recorded phases, UTC start,
@@ -228,7 +235,14 @@ retained active snapshots age into stale locally. The existing manual statistics
 Refresh still has its **150-second cooldown**, refreshes server-provided status
 too, and is not invoked by heartbeat polling.
 
-MySQL data is retained in an Aspire-managed Docker volume between runs. The
+MySQL data is retained in the explicitly named Docker volume
+`jerrychart-mysql-data` between runs, independent of checkout/worktree paths.
+Checkouts using the same Docker engine share this database; run only one
+JerryChart orchestration against it at a time. Existing path-derived volumes
+must be copied while MySQL is stopped before switching to this name; otherwise
+Docker creates an empty database volume. Preserve the original volume until the
+migration has been verified. Integration tests continue to use isolated,
+ephemeral storage rather than this development volume. The
 `mysql-password` secret parameter supplies the container's root password. Aspire
 includes that password in the connection strings supplied to both .NET apps;
 do not commit credentials. For an existing initialized volume, configure its
@@ -237,6 +251,14 @@ Rotate the database password explicitly before changing the parameter; do not
 delete the volume to change a password, as it contains hits and replay progress.
 The shared schema removes the obsolete `notes` table at startup; hits, actors,
 refresh jobs, and replay checkpoints are preserved.
+
+AppHost starts MySQL with `--skip-log-bin` because this local database does not
+use replication or binary-log-based point-in-time recovery. InnoDB redo logging
+and crash recovery remain enabled. This takes effect on the next container
+restart and does not purge existing binary logs. Before restarting an existing
+database, use `SHOW BINARY LOG STATUS;` and
+`PURGE BINARY LOGS TO '<current File value>';` to safely remove older logs while
+binary logging is still enabled; never delete MySQL log files directly.
 
 For an HTTP-only dashboard, use either:
 
@@ -419,7 +441,7 @@ instruments. Measurements appear after the corresponding activity occurs.
 | `jerrychart.monitor.errors` | Counter | `operation`, `error.type`; retry failures, archive record/block skips, malformed replies, and terminal backfill failures |
 | `jerrychart.monitor.retries` | Counter | Same error tags; retries scheduled for Jetstream, backfill database/requests, and actor refresh |
 | `jerrychart.monitor.retry.delay.seconds` | Histogram | Same error tags; selected backoff/server delay, not actual sleep duration |
-| `jerrychart.backfill.invocations` | Counter | `trigger` (Scheduled/Manual), `outcome` (Started/Completed/Skipped/Canceled/Failed) |
+| `jerrychart.backfill.invocations` | Counter | `trigger` (Manual), `outcome` (Started/Completed/Canceled/Failed) |
 | `jerrychart.backfill.duration.seconds` | Histogram | Trigger and terminal outcome; complete invocation time, including retry/cooldown waits |
 | `jerrychart.backfill.posts` | Counter | `trigger`, `result` (Resolved/Unavailable); results counted after their database transaction commits |
 | `jerrychart.archive.stalled` | Gauge | 1 when a generation stall has been declared, otherwise 0; not a heartbeat |
@@ -444,8 +466,8 @@ be processed again.
 
 Filter backfill invocations to `outcome=Started` to count runs; each started run
 also records one terminal outcome, so summing all outcomes doubles the run
-count. A scheduled lock conflict is Skipped, not Completed. Pre-canceled
-invocations and suppressed in-process overlaps do not start runs.
+count. Pre-canceled invocations do not start runs; a competing manual
+invocation reports failure if the database lock is already owned.
 Error categories distinguish known Jetstream errors such as CursorTooOld,
 UnknownZstdDictionary, and InvalidRequest; unrecognized server error names
 remain Jetstream. Normal shutdown cancellation is not an error.
@@ -604,8 +626,8 @@ category at Debug level; standalone execution retains the default Information le
 
 ### Actor handles and API limits
 
-The processing details dialog groups **Handle refresh** after **Parent-URI backfill**,
-before the status refresh note. The API's `handleRefresh` object reports recorded
+The processing details dialog groups **Handle refresh** after **Jetstream processing**
+and before **Manual parent-URI repair** and the status refresh note. The API's `handleRefresh` object reports recorded
 activity, `pending` (all recurring scheduled refresh rows), `due`, and `nextDueAt`
 (earliest queued eligibility, null for an empty queue). Future daily/retry refreshes
 remain scheduled even for resolved accounts: these counts are not unresolved-account
@@ -676,7 +698,7 @@ dotnet run --project JerryChart.Monitor
 ```
 
 The default host is configured in `JerryChart.Monitor/appsettings.json`.
-Both commands load the output-directory `appsettings.json` as a required,
+All commands load the output-directory `appsettings.json` as a required,
 lowest-priority baseline, so launching the executable from another working
 directory retains its defaults. Working-directory settings, environment
 variables, and host command-line configuration (when supplied to the builder)
@@ -690,6 +712,57 @@ Missing credentials or an invalid host are startup configuration errors
 defaults to `run`; `run` can also be supplied explicitly. `--help` requires
 neither MySQL nor a key.
 
+### One-off operator commands
+
+These commands require `ConnectionStrings__jerrychart` pointing at an existing,
+initialized JerryChart database. They run once and exit without starting
+Jetstream, the handle updater, or an HTTP listener; no archive API key is needed.
+Read-only jobs do not initialize/migrate the schema or change replay checkpoints.
+
+```powershell
+dotnet run --project JerryChart.Monitor -- audit-thread "https://bsky.app/profile/did:plc:vc7f4oafdgxsihk4cry2xpze/post/3lpatv6oelk22"
+dotnet run --project JerryChart.Monitor -- audit-thread "at://did:plc:vc7f4oafdgxsihk4cry2xpze/app.bsky.feed.post/3lpatv6oelk22"
+dotnet run --project JerryChart.Monitor -- refresh-actor "did:plc:vc7f4oafdgxsihk4cry2xpze"
+dotnet run --project JerryChart.Monitor -- check-consistency
+dotnet run --project JerryChart.Monitor -- replay-status
+```
+
+`audit-thread` accepts HTTPS `bsky.app` or `bluesky.app` post links with a DID or
+handle, and post `at://` URIs with either authority. Handles are resolved through
+the fixed, SSRF-protected public AppView. It lists visible **direct** replies,
+whether each matches the ingestion phrase rule, and whether it is stored,
+excluded, or absent. Stored hits with unresolved/different parent metadata and
+stored replies no longer visible are identified separately. Qualifying counts
+count each post once and exclude nested replies to other posts. Public thread
+results can be incomplete, and an absent reply may still arrive through archive
+replay; this is not an import, repair, or proof of historical completeness.
+
+`refresh-actor` immediately resolves one already-tracked, non-excluded DID using
+the same profile/relay clients and daily/unknown/inactive refresh intervals as
+the background updater. It updates that actor's handle, account status and next
+refresh time. Revision fencing prevents older updater responses from overwriting
+the manual result, and identity invalidation or exclusion during the request
+causes a visible conflict instead of saving stale data. Unknown/excluded actors
+are not added. HTTP failures leave existing actor data and retry eligibility intact.
+
+`check-consistency` prints counts of unresolved legacy/retry parent rows, invalid
+URI/hash/status combinations, missing actor/refresh records, and data involving
+excluded actors. It makes no repairs. Exit code **1** means one or more reported
+counts are nonzero (including unresolved legacy rows, which may be expected);
+**0** means all counts are zero.
+
+`replay-status` prints the recorded phase and heartbeat freshness, checkpoint
+update time, last durable progress, stall/retry state, resume/live/high-water
+sequences, and archive segment/block/byte position when available. It does not
+print service configuration or request fingerprints. Its reads may observe
+concurrent monitor progress; they are diagnostics, not a replay-control operation.
+
+All jobs report operational failures with exit code **1**, configuration errors
+with **2**, and successful completion with **0**. An audit difference alone is
+not an operational failure. Cancellation reports failure rather than a complete report.
+
+### Manual parent-URI repair
+
 Existing installations may explicitly run the one-off parent URI backfill:
 
 ```powershell
@@ -697,53 +770,19 @@ $env:ConnectionStrings__jerrychart = "<MySQL connection string>"
 dotnet run --project JerryChart.Monitor -- backfill-parent-uris
 ```
 
-**Just in case:** new hits already include their immediate parent-post URIs,
-so daily backfill is a safety net for pending legacy rows and retryable work
-left by interrupted invocations, not a requirement to resolve every new hit.
-It does not repeatedly retry terminal unavailable posts.
+New hits already include their immediate parent-post URIs. Repair is manual-only:
+the normal monitor does not run parent-URI backfill at startup or on a daily schedule.
+Use the command for pending legacy rows or to resume retryable work left by an
+interrupted repair. It does not repeatedly retry terminal unavailable posts.
 
-The normal monitor process also runs this same backfill **once on startup** and
-**once daily at 03:00 UTC**, using the small `ScheduledParentUriBackfill` background service.
-`AddParentUriBackfillScheduler()` registers it with the normal monitor host;
-schema initialization finishes before host startup. The service uses
-`TimeProvider` and cancellation-aware waits, checking the UTC clock at least
-once per minute to accommodate wall-clock adjustments.
-The shared schema is initialized before starting the scheduler; startup and
-daily invocations also initialize it under their own resource lock. The startup
-invocation uses the same locking, cancellation, and skip-if-locked behavior as
-daily runs. Once it finishes (or skips/fails), the next daily slot is calculated
-strictly after the current UTC time. Startup exactly at 03:00 UTC, or startup
-work crossing that boundary, therefore does not trigger a second immediate run.
-
-Scheduled work runs only while the normal monitor host is running. Missed daily
-runs are not durably recorded or replayed after a process restart; startup is
-one invocation, not catch-up for each missed day. The service
-awaits each invocation and has an in-process overlap guard; the independent MySQL advisory
-lock prevent concurrent backfill workers, including across processes. If a
-manual invocation owns the lock at the scheduled time, the scheduled invocation
-logs an informational **skip**, leaves its status untouched, and waits for the
-next daily slot; it does not fault or retry the lock. A competing manual command
-still refuses visibly. Running a manual command does not register a scheduler.
-
-`ScheduledParentUriBackfill` derives from `BackgroundService`,
-linking the service cancellation token with the host's
-`ApplicationStopping` token. It calls `ParentUriBackfillInvocation.RunAsync`,
-the same underlying entrypoint used by the `backfill-parent-uris` command,
-which creates `ParentPostClient` and runs `ParentUriBackfiller`. The
-`ParentUriBackfillStore` acquires the independent `:parent-uri-backfill`
-database advisory lock before any activity status is started.
-
-Each scheduled or manual invocation uses this shared backfiller entrypoint, with
-a fresh disposable HTTP client/rate limiter and its own dedicated non-pooled
-MySQL lock connection. Both publish the same durable status and independent
-heartbeat. Host shutdown cancels scheduled HTTP, retry and cooldown waits;
-The background service awaits completion, including heartbeat cleanup, before the host stops.
-Known invocation failures are logged without stopping future daily scheduling;
-unexpected exceptions are surfaced through the standard hosted-service failure
-logging and stop the host rather than silently losing the schedule.
-An empty queue completes without a public network request. New hits already
-contain full parent URIs, and terminal unavailable hits are never repeatedly
-retried by the daily schedule.
+The command calls `ParentUriBackfillInvocation.RunAsync`, which creates
+`ParentPostClient` and runs `ParentUriBackfiller` with a fresh disposable HTTP
+client/rate limiter and a dedicated non-pooled MySQL connection.
+`ParentUriBackfillStore` acquires the independent `:parent-uri-backfill` advisory
+lock before starting durable activity status and its heartbeat. A competing
+manual command fails visibly without overwriting the current owner's status.
+Cancellation stops HTTP, retry and cooldown waits and awaits heartbeat cleanup.
+An empty queue completes without a public network request.
 
 In Aspire, run the same command as a separate process with the database
 connection string from the dashboard. It does not require the Jetstream API key,
@@ -834,9 +873,7 @@ Use the target platform's native compiler toolchain (MSVC and the Windows SDK
 on Windows). Native publishing is opt-in, not the default Aspire development
 build.
 
-The monitor uses a small background service instead of Coravel to avoid its
-reflection-based scheduler binding and invocable construction. AOT and trimming
-warnings are not suppressed. `IsAotCompatible` enables readiness analysis,
+AOT and trimming warnings are not suppressed. `IsAotCompatible` enables readiness analysis,
 not a guarantee that every transitive dependency supports AOT; validate native
 publishes when changing dependencies.
 
@@ -891,15 +928,15 @@ with code 2 before starting the monitor listener.
 `live`-tagged check. Monitor `/alive` requires both HTTP responsiveness and an
 active supervisor lifetime; `/health` additionally requires MySQL readiness.
 Before startup or after supervisor termination, its check is unhealthy.
-Schema initialization completes before the monitor listener/scheduler starts,
+Schema initialization completes before the monitor listener starts,
 so connection refusal during initialization is expected: configure an
 appropriate container startup grace period. Graceful host shutdown cancels
-and awaits replay, scheduled backfill and their heartbeats; unexpected
+and awaits replay, the actor updater and their heartbeats; unexpected
 supervisor termination is logged and exits with failure.
 
 These checks deliberately do **not** judge event throughput, checkpoint age,
 or heartbeat freshness. Quiet live streams, archive quota waits, normal
-network retries, and scheduled backfill cooldowns do not themselves make the
+network retries, and manual repair cooldowns do not themselves make the
 supervisor unhealthy or trigger restart storms. A MySQL outage fails readiness
 but not process liveness while the supervisor is retrying. A responsive HTTP
 listener and independently refreshing heartbeat cannot prove that replay is

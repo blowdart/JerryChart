@@ -281,7 +281,7 @@ before exposing it publicly.
 | MySQL access denied after changing the password | A persisted volume retains its original password; changing the secret does not rotate it. Restore the correct secret or rotate the database password explicitly. |
 | Container startup fails | Start Docker, confirm `docker info` succeeds, select Linux containers, and check access to the `mysql:8.4` image. |
 | HTTPS certificate error | Trust the development certificate or use the `http` launch profile. |
-| NuGet restore fails for idunno packages | Check access to the MyGet feed configured in `nuget.config`; these are pinned prerelease packages. |
+| NuGet restore fails for idunno packages | Check access to nuget.org, the package source configured in `nuget.config`. |
 | Only a few users or replies appear | Check monitor logs for ongoing archive replay, retries, or quota waits; the website shows recorded data, not archive completion. |
 
 ## Jetstream monitor
@@ -298,8 +298,8 @@ dashboard. Each meter produces measurements when its corresponding SDK
 component is used.
 
 The monitor uses `idunno.AtProto` and `idunno.Bluesky`
-**8.0.0-prerelease.ga282f8f4ca**, following the documentation and sample on the
-[version/v8.0.0 branch](https://github.com/blowdart/idunno.Bluesky/blob/version/v8.0.0/docs/docs/jetstreamReplay.md).
+**8.0.0** from nuget.org, following the documentation and sample for the
+[v8.0.0 release](https://github.com/blowdart/idunno.Bluesky/blob/v8.0.0/docs/docs/jetstreamReplay.md).
 It replays `app.bsky.feed.post` commits for all authors and consumes post commits
 and identity events in the live tail. A hit must be a reply and
 contain the whole words `Jerry` and `no`, case-insensitively, separated by
@@ -1112,19 +1112,17 @@ All explicit package versions belong there; project `PackageReference` items
 have no versions. SDK versions for Aspire and MSTest are managed separately
 under `msbuild-sdks` in `global.json`. C# is pinned to version 13.
 
-`nuget.config` follows the
-[idunno.Bluesky pre-release instructions](https://github.com/blowdart/idunno.Bluesky#pre-releases):
-`idunno.AtProto`, `idunno.AtProto.*`, `idunno.Bluesky`, and `idunno.Bluesky.*`
-are mapped exclusively to the public blowdart MyGet feed; other packages use
-nuget.org. The monitor's pinned pre-release versions are in
+`nuget.config` restores all packages, including stable `idunno.AtProto`,
+`idunno.AtProto.Types`, and `idunno.Bluesky`, exclusively from nuget.org.
+The monitor's pinned versions are in
 `Directory.Packages.props`; `idunno.AtProto.Jetstream` is a namespace in the
 `idunno.AtProto` package, not a separate package.
 
 `.github/dependabot.yml` checks NuGet dependencies at the solution root, npm
 dependencies in `JerryChart.Web`, and GitHub Actions daily, with a seven-day
 cooldown for version updates. Regular update PRs are enabled, not just security
-updates. The public MyGet registry is configured explicitly for the idunno
-prereleases. Groups retain the upstream test/JWT and CodeQL patterns and add
+updates. NuGet updates use nuget.org without a custom prerelease registry.
+Groups retain the upstream test/JWT and CodeQL patterns and add
 Aspire, MSTest/Testing.Platform, idunno, OpenTelemetry, Next.js, React, and
 Tailwind groups. Dependencies outside those patterns remain eligible for
 individual updates. Both frontend and lint-package lockfiles are monitored;

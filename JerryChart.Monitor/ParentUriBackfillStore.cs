@@ -12,8 +12,10 @@ using MySqlConnector;
 
 namespace JerryChart.Monitor;
 
-internal sealed class ParentUriBackfillStore(MySqlConnection connection)
+internal sealed class ParentUriBackfillStore(MySqlConnection connection, TimeProvider? timeProvider = null)
 {
+    private readonly TimeProvider _clock = timeProvider ?? TimeProvider.System;
+
     internal async Task InitializeAsync(CancellationToken cancellationToken)
     {
         if (!await TryInitializeAsync(cancellationToken))
@@ -45,11 +47,12 @@ internal sealed class ParentUriBackfillStore(MySqlConnection connection)
             SELECT AtUri, ParentAuthorDid, ParentUriBackfillAttemptCount
             FROM Hits
             WHERE ParentUriBackfillStatus = @pending
-                OR (ParentUriBackfillStatus = @retryPending AND ParentUriBackfillNextAttemptAt <= UTC_TIMESTAMP(6))
+                OR (ParentUriBackfillStatus = @retryPending AND                 ParentUriBackfillNextAttemptAt <= @now)
             ORDER BY ParentUriBackfillStatus, ParentUriBackfillAttemptCount, CreatedAt, AtUriHash
             LIMIT 25
             """;
         AddPendingParameters(command);
+                        command.Parameters.AddWithValue("@now", _clock.GetUtcNow().UtcDateTime);
         await using MySqlDataReader reader = await command.ExecuteReaderAsync(cancellationToken);
         var requests = new List<ParentUriBackfillRequest>();
         while (await reader.ReadAsync(cancellationToken))
@@ -79,6 +82,8 @@ internal sealed class ParentUriBackfillStore(MySqlConnection connection)
         CancellationToken cancellationToken)
     {
         TimeSpan shortestDelay = TimeSpan.MaxValue;
+        // One timestamp for the whole batch keeps its rows due together; per-row clocks let them split across batches.
+        DateTime now = _clock.GetUtcNow().UtcDateTime;
         await using MySqlTransaction transaction = await connection.BeginTransactionAsync(cancellationToken);
         await ActorExclusionStore.LockAsync(connection, transaction, cancellationToken);
         foreach (ParentUriBackfillRequest request in requests)
@@ -101,13 +106,13 @@ internal sealed class ParentUriBackfillStore(MySqlConnection connection)
                 UPDATE Hits
                 SET ParentUriBackfillStatus = @retryPending,
                     ParentUriBackfillAttemptCount = LEAST(ParentUriBackfillAttemptCount + 1, 2147483647),
-                    ParentUriBackfillNextAttemptAt = TIMESTAMPADD(SECOND, @seconds, UTC_TIMESTAMP(6))
+                    ParentUriBackfillNextAttemptAt = @nextAttemptAt
                 WHERE AtUriHash = @hash AND ParentAuthorDid = @parentDid
                     AND ParentUriBackfillStatus IN (@pending, @retryPending)
                 """;
             AddPendingParameters(command);
             AddIdentityParameters(command, request);
-            command.Parameters.AddWithValue("@seconds", delay.TotalSeconds);
+            command.Parameters.AddWithValue("@nextAttemptAt", now + delay);
             if (await command.ExecuteNonQueryAsync(cancellationToken) != 1)
             {
                 throw new InvalidDataException($"Could not persist the retry state for {request.AtUri}.");

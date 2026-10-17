@@ -40,7 +40,7 @@ internal sealed class ParentUriBackfiller(
         var options = new MySqlConnectionStringBuilder(dataSource.ConnectionString) { Pooling = false };
         await using var connection = new MySqlConnection(options.ConnectionString);
         await connection.OpenAsync(cancellationToken);
-        var store = new ParentUriBackfillStore(connection);
+        var store = new ParentUriBackfillStore(connection, _clock);
         await store.InitializeAsync(cancellationToken);
         await using ProcessingActivity activity = await ProcessingActivity.StartAsync(dataSource, logger, "parent-uri-backfill",
             "backfill-running", ":parent-uri-backfill", connection, _clock, cancellationToken);

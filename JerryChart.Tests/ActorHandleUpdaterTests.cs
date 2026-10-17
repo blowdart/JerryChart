@@ -205,6 +205,7 @@ public sealed class ActorHandleUpdaterTests
 
         int ownerId = owner.ServerThread;
         await owner.CloseAsync();
+        await WaitForLockReleaseAsync(competitor, ":actor-handles", token);
         Assert.IsFalse(await statusStore.HeartbeatAsync("handle-refresh", firstRun, ":actor-handles", ownerId, token),
             "Reconnect waits cannot fabricate a heartbeat after the advisory lock connection closes.");
         await ActorHandleUpdater.InitializeStoreAsync(competitor, token);
@@ -233,6 +234,26 @@ public sealed class ActorHandleUpdaterTests
             if (predicate(activity))
             {
                 return activity;
+            }
+
+            await Task.Delay(TimeSpan.FromMilliseconds(25), timeout.Token);
+        }
+    }
+
+    // The server releases a session lock only after it notices the closed connection, which is not instant.
+    private static async Task WaitForLockReleaseAsync(
+        MySqlConnection connection, string lockSuffix, CancellationToken cancellationToken)
+    {
+        using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        timeout.CancelAfter(TimeSpan.FromSeconds(15));
+        while (true)
+        {
+            await using MySqlCommand command = connection.CreateCommand();
+            command.CommandText = "SELECT IS_USED_LOCK(CONCAT(DATABASE(), @lock))";
+            command.Parameters.AddWithValue("@lock", lockSuffix);
+            if (await command.ExecuteScalarAsync(timeout.Token) is null or DBNull)
+            {
+                return;
             }
 
             await Task.Delay(TimeSpan.FromMilliseconds(25), timeout.Token);

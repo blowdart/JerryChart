@@ -9,8 +9,10 @@ namespace JerryChart.Monitor;
 
 internal sealed record AuditedReply(string Uri, string Text, bool Qualifies, string AuthorDid);
 
+internal sealed record VerifiedAuditPost(string Uri, string Text, string AuthorDid, string? ParentUri, bool Qualifies);
+
 internal sealed record AuditedThread(string Uri, int ReportedReplies, IReadOnlyList<AuditedReply> Replies,
-    int HiddenReplies);
+    int HiddenReplies, IReadOnlyList<string> CandidateUris);
 
 internal sealed class ThreadAudit(HttpClient httpClient)
 {
@@ -72,6 +74,56 @@ internal sealed class ThreadAudit(HttpClient httpClient)
         return Parse(document.RootElement, uri);
     }
 
+    internal async Task<IReadOnlyDictionary<string, VerifiedAuditPost>> VerifyAsync(
+        IEnumerable<string> uris, CancellationToken cancellationToken)
+    {
+        var posts = new Dictionary<string, VerifiedAuditPost>(StringComparer.Ordinal);
+        foreach (string[] batch in uris.Distinct(StringComparer.Ordinal).Chunk(25))
+        {
+            string query = string.Join('&', batch.Select(uri => $"uris={Uri.EscapeDataString(uri)}"));
+            using JsonDocument document = await GetAsync($"app.bsky.feed.getPosts?{query}", cancellationToken);
+            foreach (JsonElement item in document.RootElement.GetProperty("posts").EnumerateArray())
+            {
+                VerifiedAuditPost post = ParsePost(item);
+                if (!batch.Contains(post.Uri, StringComparer.Ordinal) || !posts.TryAdd(post.Uri, post))
+                {
+                    throw new InvalidDataException("The AppView returned an unexpected or duplicate post during verification.");
+                }
+            }
+        }
+
+        return posts;
+    }
+
+    private static VerifiedAuditPost ParsePost(JsonElement post)
+    {
+        string uri = post.GetProperty("uri").GetString()
+            ?? throw new InvalidDataException("A post has no URI.");
+        string author = post.GetProperty("author").GetProperty("did").GetString()
+            ?? throw new InvalidDataException("A post has no author.");
+        JsonElement record = post.GetProperty("record");
+        string text = record.GetProperty("text").GetString()
+            ?? throw new InvalidDataException("A post has no text.");
+        if (!TryParsePost(uri, out AtUri? parsed) || parsed?.Authority.ToString() != author ||
+            !Did.TryParse(author, out _) ||
+            !record.GetProperty("createdAt").TryGetDateTimeOffset(out DateTimeOffset created) ||
+            created.UtcDateTime.Year < 1000)
+        {
+            throw new InvalidDataException("The AppView returned a malformed post.");
+        }
+
+        string? parent = record.TryGetProperty("reply", out JsonElement reply) && reply.ValueKind != JsonValueKind.Null
+            ? reply.GetProperty("parent").GetProperty("uri").GetString()
+                ?? throw new InvalidDataException("A reply has no parent URI.")
+            : null;
+        if (parent is not null && !TryParsePost(parent, out _))
+        {
+            throw new InvalidDataException("The AppView returned a malformed parent URI.");
+        }
+
+        return new(uri, text, author, parent, ReplyMatcher.ContainsPhrase(text));
+    }
+
     internal static AuditedThread Parse(JsonElement root, string uri)
     {
         JsonElement thread = root.GetProperty("thread");
@@ -87,6 +139,7 @@ internal sealed class ThreadAudit(HttpClient httpClient)
         }
 
         var replies = new List<AuditedReply>();
+        var candidates = new List<string>();
         var seen = new HashSet<string>(StringComparer.Ordinal);
         int hidden = 0;
         if (thread.TryGetProperty("replies", out JsonElement children))
@@ -97,6 +150,15 @@ internal sealed class ThreadAudit(HttpClient httpClient)
                 {
                     if (child.TryGetProperty("blocked", out _) || child.TryGetProperty("notFound", out _))
                     {
+                        string candidate = child.GetProperty("uri").GetString()
+                            ?? throw new InvalidDataException("A hidden reply has no URI.");
+                        if (!TryParsePost(candidate, out AtUri? parsedCandidate) ||
+                            parsedCandidate is null || !Did.TryParse(parsedCandidate.Authority.ToString(), out _) ||
+                            !seen.Add(candidate))
+                        {
+                            throw new InvalidDataException("The AppView returned a malformed or duplicate hidden reply URI.");
+                        }
+                        candidates.Add(candidate);
                         hidden++;
                         continue;
                     }
@@ -104,27 +166,18 @@ internal sealed class ThreadAudit(HttpClient httpClient)
                     throw new InvalidDataException("The AppView returned an unrecognized reply.");
                 }
 
-                string replyUri = reply.GetProperty("uri").GetString()
-                    ?? throw new InvalidDataException("A reply has no URI.");
-                string author = reply.GetProperty("author").GetProperty("did").GetString()
-                    ?? throw new InvalidDataException("A reply has no author.");
-                JsonElement record = reply.GetProperty("record");
-                string text = record.GetProperty("text").GetString()
-                    ?? throw new InvalidDataException("A reply has no text.");
-                if (!TryParsePost(replyUri, out AtUri? parsed) || parsed?.Authority.ToString() != author ||
-                    !Did.TryParse(author, out _) || !seen.Add(replyUri) ||
-                    record.GetProperty("reply").GetProperty("parent").GetProperty("uri").GetString() != uri ||
-                    !record.GetProperty("createdAt").TryGetDateTimeOffset(out DateTimeOffset created) ||
-                    created.UtcDateTime.Year < 1000)
+                VerifiedAuditPost parsed = ParsePost(reply);
+                if (!seen.Add(parsed.Uri) || parsed.ParentUri != uri)
                 {
                     throw new InvalidDataException("The AppView returned a malformed, duplicate or non-direct reply.");
                 }
 
-                replies.Add(new(replyUri, text, ReplyMatcher.ContainsPhrase(text), author));
+                replies.Add(new(parsed.Uri, parsed.Text, parsed.Qualifies, parsed.AuthorDid));
+                candidates.Add(parsed.Uri);
             }
         }
 
-        return new(uri, reported, replies, hidden);
+        return new(uri, reported, replies, hidden, candidates);
     }
 
     private async Task<JsonDocument> GetAsync(string query, CancellationToken cancellationToken)

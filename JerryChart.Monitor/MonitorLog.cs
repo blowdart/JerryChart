@@ -54,8 +54,8 @@ internal static partial class MonitorLog
     [LoggerMessage(13, LogLevel.Warning, "Skipping malformed matching reply {AtUri} at sequence {Sequence}.")]
     internal static partial void MalformedReply(ILogger logger, Exception exception, AtUri atUri, long? sequence);
 
-    [LoggerMessage(14, LogLevel.Error, "Monitor attempt failed. Retrying from durable progress in {DelaySeconds} seconds.")]
-    internal static partial void RetryingMonitor(ILogger logger, Exception exception, double delaySeconds);
+    [LoggerMessage(14, LogLevel.Error, "Monitor attempt failed. JerryChart will retry from durable progress in {DelaySeconds} seconds. Consecutive monitor failures: {ConsecutiveFailures}. SDK-managed live reconnects are disabled; JerryChart owns recovery.")]
+    internal static partial void RetryingMonitor(ILogger logger, Exception exception, double delaySeconds, int consecutiveFailures);
 
     [LoggerMessage(15, LogLevel.Warning, "AppView has no usable handle for {Did}; retrying in 15 minutes.")]
     internal static partial void MissingHandle(ILogger logger, Did did);
@@ -126,4 +126,13 @@ internal static partial class MonitorLog
 
     [LoggerMessage(41, LogLevel.Information, "Jetstream processing started. The monitor owns the database lock and will resume durable archive or live progress.")]
     internal static partial void JetstreamProcessingStarted(ILogger logger);
+
+    [LoggerMessage(46, LogLevel.Warning, "Live Jetstream stream ended or its transport was interrupted. JerryChart will reconnect from durable progress in {DelaySeconds} seconds. Consecutive monitor failures: {ConsecutiveFailures}. SDK-managed reconnects are disabled; JerryChart owns recovery.")]
+    internal static partial void RetryingLiveStream(ILogger logger, double delaySeconds, int consecutiveFailures);
+
+    [LoggerMessage(47, LogLevel.Debug, "Live Jetstream interruption details.")]
+    internal static partial void LiveStreamInterruptionDetails(ILogger logger, Exception exception);
+
+    [LoggerMessage(48, LogLevel.Information, "Live Jetstream resumed; receiving events.")]
+    internal static partial void LiveEventsResumed(ILogger logger);
 }

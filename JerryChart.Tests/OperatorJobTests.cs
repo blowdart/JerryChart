@@ -30,6 +30,124 @@ public sealed class OperatorJobTests
           ]}}
         """;
 
+    internal static string PostsJson => new JsonObject
+    {
+        ["posts"] = new JsonArray(JsonNode.Parse(ThreadJson)!["thread"]!["replies"]!.AsArray()
+            .Where(child => child!["post"] is not null)
+            .Select(child => child!["post"]!.DeepClone()).ToArray())
+    }.ToJsonString();
+
+    internal static string PostsForRequest(HttpRequestMessage request)
+    {
+        string[] uris = request.RequestUri!.Query.TrimStart('?').Split('&')
+            .Select(parameter => Uri.UnescapeDataString(parameter["uris=".Length..])).ToArray();
+        return new JsonObject
+        {
+            ["posts"] = new JsonArray(JsonNode.Parse(PostsJson)!["posts"]!.AsArray()
+                .Where(post => uris.Contains(post!["uri"]!.GetValue<string>(), StringComparer.Ordinal))
+                .Select(post => post!.DeepClone()).ToArray())
+        }.ToJsonString();
+    }
+
+    /// <summary>Verifies hidden candidates cannot introduce malformed or duplicate identities.</summary>
+    /// <param name="uri">The invalid hidden reply URI.</param>
+    [TestMethod]
+    [DataRow("not-an-at-uri")]
+    [DataRow("at://example.com/app.bsky.feed.post/hidden")]
+    [DataRow("at://did:plc:author/app.bsky.feed.post/match")]
+    public void RejectsInvalidHiddenCandidates(string uri)
+    {
+        JsonNode body = JsonNode.Parse(ThreadJson)!;
+        body["thread"]!["replies"]![2]!["uri"] = uri;
+        using JsonDocument document = JsonDocument.Parse(body.ToJsonString());
+        Assert.Throws<InvalidDataException>(() => ThreadAudit.Parse(document.RootElement, RootUri));
+    }
+
+    /// <summary>Verifies independent post verification batches and deduplicates URIs, including thread omissions.</summary>
+    /// <returns>A task representing post verification.</returns>
+    [TestMethod]
+    public async Task VerifiesPostsInBoundedBatches()
+    {
+        string[] uris = Enumerable.Range(0, 26)
+            .Select(index => $"at://did:plc:author/app.bsky.feed.post/post{index}").ToArray();
+        var sizes = new List<int>();
+        using var client = new HttpClient(new OperatorHttpHandler((request, _) =>
+        {
+            Assert.AreEqual("public.api.bsky.app", request.RequestUri!.Host);
+            Assert.AreEqual("/xrpc/app.bsky.feed.getPosts", request.RequestUri.AbsolutePath);
+            string[] batch = request.RequestUri.Query.TrimStart('?').Split('&')
+                .Select(parameter => Uri.UnescapeDataString(parameter["uris=".Length..])).ToArray();
+            sizes.Add(batch.Length);
+            var posts = new JsonArray(batch.Select(uri =>
+            {
+                JsonNode post = JsonNode.Parse(PostsJson)!["posts"]![0]!.DeepClone();
+                post["uri"] = uri;
+                return post;
+            }).ToArray());
+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent(new JsonObject { ["posts"] = posts }.ToJsonString())
+            });
+        }));
+
+        IReadOnlyDictionary<string, VerifiedAuditPost> result = await new ThreadAudit(client)
+            .VerifyAsync(uris.Concat(uris), TestContext.CancellationToken);
+
+        Assert.AreSequenceEqual(new[] { 25, 1 }, sizes);
+        Assert.HasCount(26, result);
+        Assert.IsTrue(result.Values.All(post => post.Qualifies && post.ParentUri == RootUri));
+    }
+
+    /// <summary>Verifies omitted posts remain unknown and changed text or parentage is preserved for reporting.</summary>
+    /// <returns>A task representing independent verification.</returns>
+    [TestMethod]
+    public async Task VerificationDoesNotConfuseOmittedPostsWithChangedPosts()
+    {
+        JsonNode body = JsonNode.Parse(PostsJson)!;
+        body["posts"]![0]!["record"]!["text"] = "Edited reply";
+        body["posts"]![1]!["record"]!["reply"]!["parent"]!["uri"] =
+            "at://did:plc:parent/app.bsky.feed.post/different";
+        using var client = new HttpClient(new OperatorHttpHandler((_, _) =>
+            Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent(body.ToJsonString()) })));
+        IReadOnlyDictionary<string, VerifiedAuditPost> result = await new ThreadAudit(client).VerifyAsync(
+            ["at://did:plc:author/app.bsky.feed.post/match", "at://did:plc:other/app.bsky.feed.post/ordinary",
+                "at://did:plc:missing/app.bsky.feed.post/unknown"], TestContext.CancellationToken);
+
+        Assert.HasCount(2, result);
+        Assert.IsFalse(result["at://did:plc:author/app.bsky.feed.post/match"].Qualifies);
+        Assert.AreNotEqual(RootUri, result["at://did:plc:other/app.bsky.feed.post/ordinary"].ParentUri);
+        Assert.IsFalse(result.ContainsKey("at://did:plc:missing/app.bsky.feed.post/unknown"));
+    }
+
+    /// <summary>Verifies duplicate, unsolicited and malformed responses cannot be accepted as verification.</summary>
+    /// <param name="fault">The response fault.</param>
+    /// <returns>A task representing response validation.</returns>
+    [TestMethod]
+    [DataRow("duplicate")]
+    [DataRow("unexpected")]
+    [DataRow("author")]
+    [DataRow("timestamp")]
+    public async Task VerificationRejectsInvalidResponses(string fault)
+    {
+        JsonNode post = JsonNode.Parse(PostsJson)!["posts"]![0]!.DeepClone();
+        var posts = new JsonArray(post);
+        switch (fault)
+        {
+            case "duplicate": posts.Add(post.DeepClone()); break;
+            case "unexpected": post["uri"] = "at://did:plc:author/app.bsky.feed.post/unexpected"; break;
+            case "author": post["author"]!["did"] = "did:plc:forged"; break;
+            case "timestamp": post["record"]!["createdAt"] = "not-a-date"; break;
+        }
+        using var client = new HttpClient(new OperatorHttpHandler((_, _) =>
+            Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent(new JsonObject { ["posts"] = posts }.ToJsonString())
+            })));
+
+        await Assert.ThrowsAsync<InvalidDataException>(() => new ThreadAudit(client)
+            .VerifyAsync(["at://did:plc:author/app.bsky.feed.post/match"], TestContext.CancellationToken));
+    }
+
     /// <summary>Verifies supported post identifiers and rejection of other origins or record types.</summary>
     /// <param name="value">The supplied post identifier.</param>
     /// <param name="valid">Whether the identifier is supported.</param>
@@ -54,13 +172,15 @@ public sealed class OperatorJobTests
 
     /// <summary>Verifies direct replies use the ingestion matcher, count once, and exclude descendants.</summary>
     [TestMethod]
-    public void AuditsOnlyVisibleDirectReplies()
+    public void AuditsVisibleRepliesAndRetainsHiddenCandidates()
     {
         using JsonDocument document = JsonDocument.Parse(ThreadJson);
         AuditedThread result = ThreadAudit.Parse(document.RootElement, RootUri);
         Assert.AreEqual(5, result.ReportedReplies);
         Assert.HasCount(2, result.Replies);
         Assert.AreEqual(1, result.HiddenReplies);
+        Assert.HasCount(3, result.CandidateUris);
+        Assert.Contains("at://did:plc:hidden/app.bsky.feed.post/hidden", result.CandidateUris);
         Assert.HasCount(1, result.Replies.Where(reply => reply.Qualifies).ToArray());
         Assert.AreEqual("Jerry, no. 😉", result.Replies[0].Text);
     }
@@ -126,9 +246,12 @@ public sealed class OperatorJobTests
         using var client = new HttpClient(new OperatorHttpHandler((_, _) =>
             Task.FromResult(new HttpResponseMessage(HttpStatusCode.BadRequest))));
         await Assert.ThrowsAsync<HttpRequestException>(() => new ThreadAudit(client).ReadAsync(RootUri, TestContext.CancellationToken));
+        await Assert.ThrowsAsync<HttpRequestException>(() => new ThreadAudit(client).VerifyAsync(
+            [RootUri], TestContext.CancellationToken));
         using var canceled = new CancellationTokenSource();
         await canceled.CancelAsync();
         await Assert.ThrowsAsync<OperationCanceledException>(() => new ThreadAudit(client).ReadAsync(RootUri, canceled.Token));
+        await Assert.ThrowsAsync<OperationCanceledException>(() => new ThreadAudit(client).VerifyAsync([RootUri], canceled.Token));
     }
 
     /// <summary>Verifies each operator subcommand routes without running ingestion.</summary>

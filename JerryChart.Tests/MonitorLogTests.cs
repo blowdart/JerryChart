@@ -20,16 +20,17 @@ public sealed class MonitorLogTests
         var logger = new RecordingLogger();
         var exception = new IOException("Replay failed.");
 
-        MonitorLog.RetryingMonitor(logger, exception, 15);
+        MonitorLog.RetryingMonitor(logger, exception, 15, 3);
 
         Assert.AreEqual(LogLevel.Error, logger.Level);
         Assert.AreEqual(14, logger.EventId.Id);
         Assert.AreSame(exception, logger.Exception);
         Assert.AreEqual(15d, logger.Fields["DelaySeconds"]);
+        Assert.AreEqual(3, logger.Fields["ConsecutiveFailures"]);
         Assert.AreEqual(
-            "Monitor attempt failed. Retrying from durable progress in {DelaySeconds} seconds.",
+            "Monitor attempt failed. JerryChart will retry from durable progress in {DelaySeconds} seconds. Consecutive monitor failures: {ConsecutiveFailures}. SDK-managed live reconnects are disabled; JerryChart owns recovery.",
             logger.Fields["{OriginalFormat}"]);
-        Assert.AreEqual("Monitor attempt failed. Retrying from durable progress in 15 seconds.", logger.Message);
+        Assert.Contains("JerryChart will retry from durable progress in 15 seconds.", logger.Message);
 
         var atUri = new AtUri("at://did:plc:author/app.bsky.feed.post/post1");
         var authorDid = new Did("did:plc:author");
@@ -54,6 +55,31 @@ public sealed class MonitorLogTests
         Assert.AreEqual(
             "Live Jetstream rejected cursor {Sequence} as too old. Returning to archive from the last durably processed sequence.",
             logger.Fields["{OriginalFormat}"]);
+    }
+
+    /// <summary>Verifies transport retry warnings omit exceptions while debug logs retain diagnostics.</summary>
+    [TestMethod]
+    public void LiveRecoveryLogsDistinguishRetryOwnershipAndDiagnostics()
+    {
+        var logger = new RecordingLogger();
+        var exception = new LiveStreamInterruptedException(new IOException("SDK diagnostic"));
+        MonitorLog.RetryingLiveStream(logger, 1.1, 8);
+        Assert.AreEqual(LogLevel.Warning, logger.Level);
+        Assert.AreEqual(46, logger.EventId.Id);
+        Assert.IsNull(logger.Exception);
+        Assert.AreEqual(8, logger.Fields["ConsecutiveFailures"]);
+        Assert.AreEqual(1.1, logger.Fields["DelaySeconds"]);
+        Assert.Contains("SDK-managed reconnects are disabled; JerryChart owns recovery.", logger.Message);
+
+        MonitorLog.LiveStreamInterruptionDetails(logger, exception);
+        Assert.AreEqual(LogLevel.Debug, logger.Level);
+        Assert.AreSame(exception, logger.Exception);
+        Assert.AreEqual(47, logger.EventId.Id);
+
+        MonitorLog.LiveEventsResumed(logger);
+        Assert.AreEqual(LogLevel.Information, logger.Level);
+        Assert.AreEqual(48, logger.EventId.Id);
+        Assert.AreEqual("Live Jetstream resumed; receiving events.", logger.Message);
     }
 
     /// <summary>Verifies disabled log levels do not invoke the logger.</summary>

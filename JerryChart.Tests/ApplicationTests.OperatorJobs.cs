@@ -3,6 +3,7 @@
 
 using System.Globalization;
 using System.Net;
+using System.Text.Json.Nodes;
 
 using idunno.AtProto;
 using idunno.AtProto.Jetstream.Archive;
@@ -58,17 +59,105 @@ public sealed partial class ApplicationTests
         Assert.DoesNotContain("must-not-print", report.ToString());
         Assert.AreEqual(progress, await store.LoadProgressAsync(cancellationToken));
 
-        using var client = new HttpClient(new OperatorHttpHandler((_, _) =>
+        using var client = new HttpClient(new OperatorHttpHandler((request, _) =>
             Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
             {
-                Content = new StringContent(OperatorJobTests.ThreadJson)
+                Content = new StringContent(request.RequestUri!.AbsolutePath.EndsWith("getPosts", StringComparison.Ordinal)
+                    ? OperatorJobTests.PostsForRequest(request) : OperatorJobTests.ThreadJson)
             })));
         report.GetStringBuilder().Clear();
         Assert.AreEqual(0, await jobs.AuditThreadAsync(OperatorJobTests.RootUri, client, cancellationToken));
-        Assert.Contains("Visible qualifying direct replies: 1; stored for this parent: 1; qualifying absent and not excluded: 0", report.ToString());
+        Assert.Contains("Stored for this parent: 1; confirmed stored matches: 1; stored now nonmatching or different parent: 0; stored unavailable/unverifiable: 0", report.ToString());
+        Assert.Contains("Confirmed qualifying replies absent from database and not excluded: 0", report.ToString());
         Assert.Contains("MATCH | stored | at://did:plc:author", report.ToString());
         Assert.Contains("NO MATCH | absent", report.ToString());
         Assert.Contains("Public thread results may be incomplete", report.ToString());
+
+        using var omitted = new HttpClient(new OperatorHttpHandler((request, _) =>
+        {
+            JsonNode thread = JsonNode.Parse(OperatorJobTests.ThreadJson)!;
+            thread["thread"]!["replies"] = new JsonArray();
+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent(request.RequestUri!.AbsolutePath.EndsWith("getPosts", StringComparison.Ordinal)
+                    ? OperatorJobTests.PostsForRequest(request) : thread.ToJsonString())
+            });
+        }));
+        report.GetStringBuilder().Clear();
+        await jobs.AuditThreadAsync(OperatorJobTests.RootUri, omitted, cancellationToken);
+        Assert.Contains("confirmed stored matches: 1", report.ToString());
+        Assert.Contains("absent from thread response", report.ToString());
+        Assert.DoesNotContain("STORED, NOT VISIBLE", report.ToString());
+        Assert.Contains("Discovery completeness: NOT ESTABLISHED", report.ToString());
+
+        foreach (bool returned in new[] { true, false })
+        {
+            using var hiddenClient = new HttpClient(new OperatorHttpHandler((request, _) =>
+            {
+                if (!request.RequestUri!.AbsolutePath.EndsWith("getPosts", StringComparison.Ordinal))
+                {
+                    return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+                    {
+                        Content = new StringContent(OperatorJobTests.ThreadJson)
+                    });
+                }
+                Assert.Contains(Uri.EscapeDataString("at://did:plc:hidden/app.bsky.feed.post/hidden"),
+                    request.RequestUri.Query);
+                JsonNode body = JsonNode.Parse(OperatorJobTests.PostsForRequest(request))!;
+                if (returned)
+                {
+                    JsonNode hiddenPost = body["posts"]![0]!.DeepClone();
+                    hiddenPost["uri"] = "at://did:plc:hidden/app.bsky.feed.post/hidden";
+                    hiddenPost["author"]!["did"] = "did:plc:hidden";
+                    body["posts"]!.AsArray().Add(hiddenPost);
+                }
+                return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent(body.ToJsonString())
+                });
+            }));
+            report.GetStringBuilder().Clear();
+            await jobs.AuditThreadAsync(OperatorJobTests.RootUri, hiddenClient, cancellationToken);
+            Assert.Contains($"Confirmed qualifying replies absent from database and not excluded: {(returned ? 1 : 0)}",
+                report.ToString());
+            Assert.Contains(returned
+                ? "MATCH | absent | at://did:plc:hidden/app.bsky.feed.post/hidden"
+                : "UNAVAILABLE/UNVERIFIABLE | discovered | at://did:plc:hidden/app.bsky.feed.post/hidden", report.ToString());
+        }
+
+        foreach (string scenario in new[] { "unavailable", "edited", "different parent" })
+        {
+            using var changed = new HttpClient(new OperatorHttpHandler((request, _) =>
+            {
+                string json = OperatorJobTests.ThreadJson;
+                if (request.RequestUri!.AbsolutePath.EndsWith("getPosts", StringComparison.Ordinal))
+                {
+                    JsonNode body = JsonNode.Parse(OperatorJobTests.PostsForRequest(request))!;
+                    JsonArray posts = body["posts"]!.AsArray();
+                    if (scenario == "unavailable")
+                    {
+                        posts.RemoveAt(0);
+                    }
+                    else if (scenario == "edited")
+                    {
+                        posts[0]!["record"]!["text"] = "Edited reply";
+                    }
+                    else
+                    {
+                        posts[0]!["record"]!["reply"]!["parent"]!["uri"] =
+                            "at://did:plc:parent/app.bsky.feed.post/different";
+                    }
+                    json = body.ToJsonString();
+                }
+                return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent(json) });
+            }));
+            report.GetStringBuilder().Clear();
+            await jobs.AuditThreadAsync(OperatorJobTests.RootUri, changed, cancellationToken);
+            Assert.Contains("confirmed stored matches: 0", report.ToString());
+            Assert.Contains(scenario == "unavailable"
+                ? "stored now nonmatching or different parent: 0; stored unavailable/unverifiable: 1"
+                : "stored now nonmatching or different parent: 1; stored unavailable/unverifiable: 0", report.ToString());
+        }
 
         await using MySqlCommand command = connection.CreateCommand();
         command.CommandText = """
@@ -78,7 +167,7 @@ public sealed partial class ApplicationTests
         report.GetStringBuilder().Clear();
         await jobs.AuditThreadAsync(OperatorJobTests.RootUri, client, cancellationToken);
         Assert.Contains("stored, parent unresolved or different", report.ToString());
-        Assert.Contains("qualifying absent and not excluded: 0", report.ToString());
+        Assert.Contains("Confirmed qualifying replies absent from database and not excluded: 0", report.ToString());
         report.GetStringBuilder().Clear();
         Assert.AreEqual(1, await jobs.CheckConsistencyAsync(cancellationToken));
         Assert.Contains("Unresolved parent URIs (legacy/retry queue): 1", report.ToString());
@@ -156,11 +245,11 @@ public sealed partial class ApplicationTests
         await command.ExecuteNonQueryAsync(cancellationToken);
         report.GetStringBuilder().Clear();
         await jobs.AuditThreadAsync(OperatorJobTests.RootUri, client, cancellationToken);
-        Assert.Contains("qualifying absent and not excluded: 1", report.ToString());
+        Assert.Contains("Confirmed qualifying replies absent from database and not excluded: 1", report.ToString());
         await new ActorExclusionStore(connection).ExcludeAsync(hit.AuthorDid, cancellationToken);
         report.GetStringBuilder().Clear();
         await jobs.AuditThreadAsync(OperatorJobTests.RootUri, client, cancellationToken);
-        Assert.Contains("qualifying absent and not excluded: 0", report.ToString());
+        Assert.Contains("Confirmed qualifying replies absent from database and not excluded: 0", report.ToString());
         Assert.Contains("MATCH | excluded", report.ToString());
         await Assert.ThrowsAsync<InvalidOperationException>(() =>
             jobs.RefreshActorAsync(hit.AuthorDid, new ActorProfileClient(failing), cancellationToken));

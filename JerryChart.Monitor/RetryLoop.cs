@@ -66,17 +66,24 @@ internal static class RetryLoop
                     break;
                 }
 
-                failures = Math.Min(failures + 1, s_retrySeconds.Length);
+                failures = failures < int.MaxValue ? failures + 1 : int.MaxValue;
                 TimeSpan delay = Delay(failures);
-                MonitorMetrics.Retry(MetricOperation.Jetstream, exception, delay);
+                Exception metricException = exception is LiveStreamInterruptedException { InnerException: { } inner }
+                    ? inner : exception;
+                MonitorMetrics.Retry(MetricOperation.Jetstream, metricException, delay);
                 if (archiveStall?.Failure(exception, delay) == true)
                 {
                     MonitorLog.RepeatedArchiveMismatch(logger, archiveStall.Snapshot().ConsecutiveGenerationMismatches,
                         delay.TotalSeconds);
                 }
+                else if (exception is LiveStreamInterruptedException)
+                {
+                    MonitorLog.RetryingLiveStream(logger, delay.TotalSeconds, failures);
+                    MonitorLog.LiveStreamInterruptionDetails(logger, exception);
+                }
                 else
                 {
-                    MonitorLog.RetryingMonitor(logger, exception, delay.TotalSeconds);
+                    MonitorLog.RetryingMonitor(logger, exception, delay.TotalSeconds, failures);
                 }
                 try
                 {

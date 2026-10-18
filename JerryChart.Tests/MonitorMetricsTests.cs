@@ -4,6 +4,7 @@
 using System.Diagnostics;
 using System.Diagnostics.Metrics;
 using System.Net;
+using System.Net.WebSockets;
 using System.Text.Json;
 
 using idunno.AtProto.Jetstream;
@@ -25,6 +26,33 @@ namespace JerryChart.Tests;
 [DoNotParallelize]
 public sealed class MonitorMetricsTests
 {
+    /// <summary>Verifies live interruption logging wrappers preserve all retry metric categories.</summary>
+    /// <param name="webSocket">Whether the interruption wraps a WebSocket failure.</param>
+    /// <returns>A task representing a single retry.</returns>
+    [TestMethod]
+    [DataRow(true)]
+    [DataRow(false)]
+    public async Task LiveInterruptionPreservesMetricCategories(bool webSocket)
+    {
+        var readings = new List<Reading>();
+        using MeterListener listener = Listen(readings);
+        using var shutdown = new CancellationTokenSource();
+        await RetryLoop.RunAsync((_, _) =>
+            throw new LiveStreamInterruptedException(webSocket ? new WebSocketException() : null),
+            NullLogger.Instance, shutdown.Token, (_, _) =>
+            {
+                shutdown.Cancel();
+                return Task.CompletedTask;
+            });
+
+        foreach (string name in new[] { "jerrychart.monitor.errors", "jerrychart.monitor.retries",
+            "jerrychart.monitor.retry.delay.seconds" })
+        {
+            Assert.AreEqual(webSocket ? "WebSocket" : "Transport",
+                readings.Single(reading => reading.Name == name).Tags["error.type"]);
+        }
+    }
+
     /// <summary>Verifies generated counters and histograms expose typed tags and seconds-valued measurements.</summary>
     [TestMethod]
     public void RecordsGeneratedInstrumentsWithTypedTags()

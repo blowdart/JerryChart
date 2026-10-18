@@ -349,8 +349,11 @@ To enforce monitor-controlled reconnect delays, it composes the SDK's
 The archive client handles advertised bandwidth quotas and HTTP 429
 `Retry-After` instructions; those server-directed waits are not shortened to
 the reconnect cap. Archive requests are sequential, and live consumption uses
-one parser with bounded buffering. An expired live cursor returns to the archive
-after the last durably processed sequence, rather than jumping to the live tip.
+one parser with bounded buffering. Processing status reports `live-connecting`
+until the stream yields its first live event; `live` therefore means the stream
+has delivered data, not merely that connection was attempted. An expired live
+cursor returns to the archive after the last durably processed sequence, rather
+than jumping to the live tip.
 
 The snapshot's `onArchiveError` callback explicitly skips invalid records when
 a sequence is available, or invalid blocks when decoding fails before rows are
@@ -360,12 +363,13 @@ durable checkpointing to continue rather than repeatedly failing on the same
 input. Invalid frame lengths, truncated downloads, and transport failures still
 fail the attempt and use the normal reconnect/retry policy.
 
-Failures are logged and retried indefinitely with delays of **1, 5, 15, 30, 90,
-150, then 300 seconds**, remaining at 300 seconds for further consecutive failures.
-Successfully processed events reset the schedule. Database outages and server
-refusals are retried too. Authentication/configuration faults require operator
-correction, but do not make an already-running monitor give up. Ctrl+C or Aspire
-shutdown cancels replay, quota waits, and reconnect waits.
+Failures are logged and retried indefinitely using nominal delays of **1, 5, 15,
+30, 90, 150, then 300 seconds**. Each delay has bounded ±20% jitter to spread
+reconnects across instances, with an absolute 300-second cap. Successfully
+processed events reset the schedule. Database outages and server refusals are
+retried too. Authentication/configuration faults require operator correction,
+but do not make an already-running monitor give up. Ctrl+C or Aspire shutdown
+cancels replay, quota waits, and reconnect waits.
 
 ### API metrics
 
@@ -802,8 +806,9 @@ mismatches fail visibly without being treated as unavailable.
 Backfill persistence is handled by a dedicated store, separate from HTTP
 orchestration. Transient MySQL connection/query failures reconnect and reacquire
 the dedicated advisory lock, then resume the durable queue. Database retries
-use the same indefinite **1, 5, 15, 30, 90, 150, 300 seconds** schedule, capped
-at 300; persisted batches reset this database backoff. Authentication, invalid
+use the same indefinite **1, 5, 15, 30, 90, 150, 300 seconds** nominal schedule,
+with bounded ±20% jitter and an absolute 300-second cap; persisted batches reset
+this database backoff. Authentication, invalid
 configuration, malformed schema/data, and an already-owned backfill lock fail
 visibly instead of being retried as temporary outages. Cancellation interrupts
 database retry waits as well as HTTP/cooldown waits.

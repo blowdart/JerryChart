@@ -46,6 +46,14 @@ public sealed class MonitorLogTests
         Assert.AreEqual(25, logger.EventId.Id);
         Assert.AreSame(exception, logger.Exception);
         Assert.AreEqual(30d, logger.Fields["DelaySeconds"]);
+
+        MonitorLog.LiveCursorTooOld(logger, 456);
+        Assert.AreEqual(LogLevel.Warning, logger.Level);
+        Assert.AreEqual(45, logger.EventId.Id);
+        Assert.AreEqual(456L, logger.Fields["Sequence"]);
+        Assert.AreEqual(
+            "Live Jetstream rejected cursor {Sequence} as too old. Returning to archive from the last durably processed sequence.",
+            logger.Fields["{OriginalFormat}"]);
     }
 
     /// <summary>Verifies disabled log levels do not invoke the logger.</summary>
@@ -54,7 +62,7 @@ public sealed class MonitorLogTests
     {
         var logger = new RecordingLogger { Enabled = false };
 
-        MonitorLog.ListeningToLive(logger, 456);
+        MonitorLog.ConnectingToLive(logger, 456);
 
         Assert.AreEqual(0, logger.Writes);
     }

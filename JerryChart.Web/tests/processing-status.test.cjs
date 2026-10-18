@@ -40,7 +40,7 @@ function modules(overrides = {}) {
 const { isProcessingStatus, activityMessage, activityOutcome, activitySummary, replayThroughputMessage } = modules()("lib\\processing-status.ts");
 const observedAt = "2026-10-05T12:00:00+00:00";
 const worker = (phase = "not-started") => ({
-  phase, state: phase, isRunning: ["archive", "live", "backfill-running", "retrying",
+  phase, state: phase, isRunning: ["archive", "live-connecting", "live", "backfill-running", "retrying",
     "handle-refresh-idle", "handle-refresh-running", "handle-refresh-waiting"].includes(phase),
   startedAt: phase === "not-started" ? null : observedAt,
   changedAt: phase === "not-started" ? null : observedAt,
@@ -158,6 +158,7 @@ test("throughput continues aging during an outstanding poll independently of the
 
 test("status validation accepts empty not-started, stale and terminal snapshots but not malformed success", () => {
   assert.ok(isProcessingStatus(status()));
+  assert.ok(isProcessingStatus(status("live-connecting")));
   assert.ok(isProcessingStatus(status("live", "completed")));
   const stale = status("archive", "retrying");
   stale.monitor.activity.state = "stale";
@@ -177,10 +178,11 @@ test("status validation accepts empty not-started, stale and terminal snapshots 
 
 test("activity messages distinguish replay, live, retries, stale, stopped, failure and unknown without invented progress", () => {
   assert.match(activityMessage(worker("archive"), observedAt, 59_999), /Historical replay in progress/);
+  assert.match(activityMessage(worker("live-connecting"), observedAt, 0), /Waiting for the first live event; connection not yet confirmed/);
   assert.match(activityMessage(worker("live"), observedAt, 0), /Listening to live/);
   assert.match(activityMessage(worker("backfill-running"), observedAt, 0), /backfill in progress/);
   assert.match(activityMessage(worker("retrying"), observedAt, 0), /Retrying/);
-  for (const phase of ["archive", "live", "backfill-running", "retrying"]) {
+  for (const phase of ["archive", "live-connecting", "live", "backfill-running", "retrying"]) {
     assert.match(activityMessage(worker(phase), observedAt, 60_000), /Heartbeat stale; activity unknown/);
   }
   assert.match(activityMessage(worker("stopped"), observedAt, 90_000), /Stopped/);
@@ -191,6 +193,8 @@ test("activity messages distinguish replay, live, retries, stale, stopped, failu
 
 test("activity summaries stay concise while distinguishing stale, stalled and worker phases", () => {
   assert.equal(activitySummary(worker("archive"), observedAt, 0), "Historical replay in progress.");
+  assert.equal(activitySummary(worker("live-connecting"), observedAt, 0),
+    "Waiting for the first live event; connection not yet confirmed.");
   assert.equal(activitySummary(worker("live"), observedAt, 0), "Listening to live events.");
   assert.equal(activitySummary(worker("retrying"), observedAt, 0), "Retrying after a temporary failure or waiting for scheduled retries.");
   assert.equal(activitySummary(worker("archive"), observedAt, 60_000), "Heartbeat stale; activity unknown.");
@@ -205,6 +209,8 @@ test("activity outcomes distinguish never-run, completed, active and stale backf
   assert.equal(activityOutcome(worker("completed"), observedAt, 0), "Completed.");
   assert.match(activityOutcome({ ...worker("completed"), finishedAt: null }, observedAt, 0), /No finish recorded/);
   assert.equal(activityOutcome(worker("backfill-running"), observedAt, 0), "In progress.");
+  assert.equal(activityOutcome(worker("live-connecting"), observedAt, 0),
+    "In progress (waiting for the first live event).");
   assert.match(activityOutcome(worker("backfill-running"), observedAt, 60_000), /Activity stale; the run may have been interrupted/);
   assert.equal(activityOutcome(worker("failure"), observedAt, 0), "Failed.");
   assert.equal(activityOutcome(worker("stopped"), observedAt, 0), "Stopped before completion.");

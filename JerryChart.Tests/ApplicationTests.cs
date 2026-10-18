@@ -1094,7 +1094,9 @@ public sealed partial class ApplicationTests
             return Task.CompletedTask;
         });
         Assert.AreEqual(3, attempts);
-        Assert.AreSequenceEqual(new double[] { 1, 5 }, delays);
+        Assert.HasCount(2, delays);
+        Assert.IsTrue(delays[0] is >= 0.8 and <= 1.2);
+        Assert.IsTrue(delays[1] is >= 4 and <= 6);
     }
 
     private static HttpResponseMessage Json(object body)

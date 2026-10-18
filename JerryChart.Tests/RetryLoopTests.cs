@@ -15,7 +15,7 @@ namespace JerryChart.Tests;
 [TestClass]
 public sealed class RetryLoopTests
 {
-    /// <summary>Verifies the exact user-requested delay schedule and continued retries after the cap.</summary>
+    /// <summary>Verifies jittered delays remain bounded by the schedule and retries continue after the cap.</summary>
     /// <returns>A task representing the retry test.</returns>
     [TestMethod]
     public async Task FailuresRetryForeverAtFiveMinuteCap()
@@ -37,8 +37,20 @@ public sealed class RetryLoopTests
 
             return Task.CompletedTask;
         });
-        Assert.AreSequenceEqual(new double[] { 1, 5, 15, 30, 90, 150, 300, 300, 300, 300 }, waits);
+        AssertDelays(waits, [1, 5, 15, 30, 90, 150, 300, 300, 300, 300]);
         Assert.AreEqual(10, attempts);
+    }
+
+    /// <summary>Verifies retry jitter stays within its lower bound and the global maximum.</summary>
+    [TestMethod]
+    public void DelayAppliesBoundedJitter()
+    {
+        Assert.AreEqual(TimeSpan.FromSeconds(0.8), RetryLoop.Delay(1, 0));
+        Assert.AreEqual(TimeSpan.FromSeconds(1.2), RetryLoop.Delay(1, 1));
+        Assert.AreEqual(TimeSpan.FromSeconds(240), RetryLoop.Delay(7, 0));
+        Assert.AreEqual(TimeSpan.FromSeconds(300), RetryLoop.Delay(7, 1));
+        Assert.Throws<ArgumentOutOfRangeException>(() => RetryLoop.Delay(1, -0.01));
+        Assert.Throws<ArgumentOutOfRangeException>(() => RetryLoop.Delay(1, 1.01));
     }
 
     /// <summary>Verifies successful event processing resets consecutive failure delays.</summary>
@@ -67,7 +79,7 @@ public sealed class RetryLoopTests
 
             return Task.CompletedTask;
         });
-        Assert.AreSequenceEqual(new double[] { 1, 5, 1, 5 }, waits);
+        AssertDelays(waits, [1, 5, 1, 5]);
     }
 
     /// <summary>Verifies authentication refusals are logged and retried rather than terminating.</summary>
@@ -114,5 +126,17 @@ public sealed class RetryLoopTests
             await Task.Delay(Timeout.InfiniteTimeSpan, token);
         });
         Assert.AreEqual(1, attempts);
+    }
+
+    private static void AssertDelays(IReadOnlyList<double> actual, IReadOnlyList<double> nominal)
+    {
+        Assert.HasCount(nominal.Count, actual);
+        for (int index = 0; index < nominal.Count; index++)
+        {
+            Assert.IsTrue(actual[index] >= nominal[index] * 0.8,
+                $"Delay {actual[index]} is below the jittered lower bound for {nominal[index]} seconds.");
+            Assert.IsTrue(actual[index] <= Math.Min(nominal[index] * 1.2, 300),
+                $"Delay {actual[index]} exceeds the jittered upper bound for {nominal[index]} seconds.");
+        }
     }
 }

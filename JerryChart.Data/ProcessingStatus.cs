@@ -29,7 +29,7 @@ public sealed record WorkerActivity(
     /// <returns>The activity with current freshness and liveness.</returns>
     public WorkerActivity Evaluate(DateTimeOffset now)
     {
-        bool active = Phase is "archive" or "live" or "backfill-running" or "retrying"
+        bool active = Phase is "archive" or "live-connecting" or "live" or "backfill-running" or "retrying"
             or "handle-refresh-idle" or "handle-refresh-running" or "handle-refresh-waiting";
         bool fresh = HeartbeatAt is { } heartbeat && heartbeat <= now &&
             now - heartbeat < TimeSpan.FromSeconds(60);

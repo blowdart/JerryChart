@@ -60,12 +60,15 @@ jobs:
             "$REGISTRY/jerrychart-api:$tag" \
             "$REGISTRY/jerrychart-monitor:$tag" \
             "$REGISTRY/jerrychart-web:$tag" | gzip > release-images.tar.gz
+          printf '%s\n' "$tag" > release-tag.txt
 
       - name: Preserve images for publication
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: release-images
-          path: release-images.tar.gz
+          path: |
+            release-images.tar.gz
+            release-tag.txt
           compression-level: 0
           if-no-files-found: error
           retention-days: 7
@@ -102,7 +105,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          tag="$GITHUB_SHA-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
+          tag="$(cat release-tag.txt)"
           printf '### Release images\n\nCommit: `%s`\n\n' "$GITHUB_SHA" > release-images.md
           for component in api monitor web; do
             image="$REGISTRY/jerrychart-$component:$tag"

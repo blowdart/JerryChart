@@ -85,7 +85,9 @@ administration access. Registry credentials expire after 15 minutes.
 The registry plan must allow four repositories in total: the existing `maddybot`
 repository plus the three JerryChart repositories. Images are tagged with the
 source commit, workflow run ID, and attempt number; there is no floating `latest`
-tag or automatic deployment. The publish job records the three immutable image
+tag or automatic deployment. The build-time tag is retained with the image
+artifact so publish-only retries reuse the original images and tags.
+The publish job records the three immutable image
 references in its summary and in the `release-image-references` artifact. A
 failed push can leave a partial set in the registry: only use a release after the
 entire workflow succeeds and all three references have been recorded.

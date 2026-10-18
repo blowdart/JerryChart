@@ -744,7 +744,8 @@ dotnet run --project JerryChart.Monitor -- replay-status
 `audit-thread` accepts HTTPS `bsky.app` or `bluesky.app` post links with a DID or
 handle, and post `at://` URIs with either authority. Handles are resolved through
 the fixed, SSRF-protected public AppView. Thread results discover candidate direct
-replies; `getPosts` independently verifies every stored or discovered reply URI in
+replies, retaining URI candidates from blocked/not-found placeholders too;
+`getPosts` independently verifies every stored or discovered reply URI in
 batches of up to 25. A repeatable-read database snapshot is compared with current
 public records, checking the phrase and immediate parent, deduplicated by URI.
 The report separates confirmed stored matches, now-nonmatching/different-parent

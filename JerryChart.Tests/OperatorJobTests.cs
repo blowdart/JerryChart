@@ -49,6 +49,20 @@ public sealed class OperatorJobTests
         }.ToJsonString();
     }
 
+    /// <summary>Verifies hidden candidates cannot introduce malformed or duplicate identities.</summary>
+    /// <param name="uri">The invalid hidden reply URI.</param>
+    [TestMethod]
+    [DataRow("not-an-at-uri")]
+    [DataRow("at://example.com/app.bsky.feed.post/hidden")]
+    [DataRow("at://did:plc:author/app.bsky.feed.post/match")]
+    public void RejectsInvalidHiddenCandidates(string uri)
+    {
+        JsonNode body = JsonNode.Parse(ThreadJson)!;
+        body["thread"]!["replies"]![2]!["uri"] = uri;
+        using JsonDocument document = JsonDocument.Parse(body.ToJsonString());
+        Assert.Throws<InvalidDataException>(() => ThreadAudit.Parse(document.RootElement, RootUri));
+    }
+
     /// <summary>Verifies independent post verification batches and deduplicates URIs, including thread omissions.</summary>
     /// <returns>A task representing post verification.</returns>
     [TestMethod]
@@ -158,13 +172,15 @@ public sealed class OperatorJobTests
 
     /// <summary>Verifies direct replies use the ingestion matcher, count once, and exclude descendants.</summary>
     [TestMethod]
-    public void AuditsOnlyVisibleDirectReplies()
+    public void AuditsVisibleRepliesAndRetainsHiddenCandidates()
     {
         using JsonDocument document = JsonDocument.Parse(ThreadJson);
         AuditedThread result = ThreadAudit.Parse(document.RootElement, RootUri);
         Assert.AreEqual(5, result.ReportedReplies);
         Assert.HasCount(2, result.Replies);
         Assert.AreEqual(1, result.HiddenReplies);
+        Assert.HasCount(3, result.CandidateUris);
+        Assert.Contains("at://did:plc:hidden/app.bsky.feed.post/hidden", result.CandidateUris);
         Assert.HasCount(1, result.Replies.Where(reply => reply.Qualifies).ToArray());
         Assert.AreEqual("Jerry, no. 😉", result.Replies[0].Text);
     }

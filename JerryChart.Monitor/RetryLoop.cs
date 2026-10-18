@@ -68,7 +68,9 @@ internal static class RetryLoop
 
                 failures = failures < int.MaxValue ? failures + 1 : int.MaxValue;
                 TimeSpan delay = Delay(failures);
-                MonitorMetrics.Retry(MetricOperation.Jetstream, exception, delay);
+                Exception metricException = exception is LiveStreamInterruptedException { InnerException: { } inner }
+                    ? inner : exception;
+                MonitorMetrics.Retry(MetricOperation.Jetstream, metricException, delay);
                 if (archiveStall?.Failure(exception, delay) == true)
                 {
                     MonitorLog.RepeatedArchiveMismatch(logger, archiveStall.Snapshot().ConsecutiveGenerationMismatches,

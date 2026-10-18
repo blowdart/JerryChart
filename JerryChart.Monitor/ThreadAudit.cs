@@ -12,7 +12,7 @@ internal sealed record AuditedReply(string Uri, string Text, bool Qualifies, str
 internal sealed record VerifiedAuditPost(string Uri, string Text, string AuthorDid, string? ParentUri, bool Qualifies);
 
 internal sealed record AuditedThread(string Uri, int ReportedReplies, IReadOnlyList<AuditedReply> Replies,
-    int HiddenReplies);
+    int HiddenReplies, IReadOnlyList<string> CandidateUris);
 
 internal sealed class ThreadAudit(HttpClient httpClient)
 {
@@ -139,6 +139,7 @@ internal sealed class ThreadAudit(HttpClient httpClient)
         }
 
         var replies = new List<AuditedReply>();
+        var candidates = new List<string>();
         var seen = new HashSet<string>(StringComparer.Ordinal);
         int hidden = 0;
         if (thread.TryGetProperty("replies", out JsonElement children))
@@ -149,6 +150,15 @@ internal sealed class ThreadAudit(HttpClient httpClient)
                 {
                     if (child.TryGetProperty("blocked", out _) || child.TryGetProperty("notFound", out _))
                     {
+                        string candidate = child.GetProperty("uri").GetString()
+                            ?? throw new InvalidDataException("A hidden reply has no URI.");
+                        if (!TryParsePost(candidate, out AtUri? parsedCandidate) ||
+                            parsedCandidate is null || !Did.TryParse(parsedCandidate.Authority.ToString(), out _) ||
+                            !seen.Add(candidate))
+                        {
+                            throw new InvalidDataException("The AppView returned a malformed or duplicate hidden reply URI.");
+                        }
+                        candidates.Add(candidate);
                         hidden++;
                         continue;
                     }
@@ -163,10 +173,11 @@ internal sealed class ThreadAudit(HttpClient httpClient)
                 }
 
                 replies.Add(new(parsed.Uri, parsed.Text, parsed.Qualifies, parsed.AuthorDid));
+                candidates.Add(parsed.Uri);
             }
         }
 
-        return new(uri, reported, replies, hidden);
+        return new(uri, reported, replies, hidden, candidates);
     }
 
     private async Task<JsonDocument> GetAsync(string query, CancellationToken cancellationToken)

@@ -33,7 +33,7 @@ internal sealed class OperatorJobs(MySqlDataSource source, TextWriter output)
             """;
         command.Parameters.AddWithValue("@parent", thread.Uri);
         command.Parameters.AddWithValue("@replies",
-            JsonSerializer.Serialize(thread.Replies.Select(reply => reply.Uri).ToArray(), ReplayJsonContext.Default.StringArray));
+            JsonSerializer.Serialize(thread.CandidateUris.ToArray(), ReplayJsonContext.Default.StringArray));
         var stored = new HashSet<string>(StringComparer.Ordinal);
         var linked = new HashSet<string>(StringComparer.Ordinal);
         await using (MySqlDataReader reader = await command.ExecuteReaderAsync(cancellationToken))
@@ -61,7 +61,7 @@ internal sealed class OperatorJobs(MySqlDataSource source, TextWriter output)
         DateTimeOffset databaseObservedAt = DateTimeOffset.UtcNow;
         await transaction.CommitAsync(cancellationToken);
         IReadOnlyDictionary<string, VerifiedAuditPost> verified = await audit.VerifyAsync(
-            stored.Concat(thread.Replies.Select(reply => reply.Uri)), cancellationToken);
+            stored.Concat(thread.CandidateUris), cancellationToken);
         string parentDid = new AtUri(thread.Uri).Authority.ToString();
         bool Matches(VerifiedAuditPost reply) => reply.Qualifies && reply.ParentUri == thread.Uri;
         bool IsExcluded(VerifiedAuditPost reply) => excluded.Contains(reply.AuthorDid) || excluded.Contains(parentDid);
@@ -76,7 +76,7 @@ internal sealed class OperatorJobs(MySqlDataSource source, TextWriter output)
         await output.WriteLineAsync("Discovery completeness: NOT ESTABLISHED. Public thread results may be incomplete; no missing replies found does not prove an exhaustive count.");
         await output.WriteLineAsync("Read-only audit. getPosts verifies each stored/discovered URI independently. An omitted post is unavailable/unverifiable, not confirmed deleted. HTTP or malformed-response failures make the audit inconclusive and fail the command.");
         await output.WriteLineAsync("Counts retain historical matches, including replies subsequently edited or deleted. Database and public observations are not atomic.");
-        var discovered = thread.Replies.Select(reply => reply.Uri).ToHashSet(StringComparer.Ordinal);
+        var discovered = thread.CandidateUris.ToHashSet(StringComparer.Ordinal);
         foreach (string uri in stored.Concat(discovered).Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal))
         {
             if (!verified.TryGetValue(uri, out VerifiedAuditPost? reply))

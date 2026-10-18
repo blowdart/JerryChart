@@ -90,6 +90,41 @@ public sealed partial class ApplicationTests
         Assert.DoesNotContain("STORED, NOT VISIBLE", report.ToString());
         Assert.Contains("Discovery completeness: NOT ESTABLISHED", report.ToString());
 
+        foreach (bool returned in new[] { true, false })
+        {
+            using var hiddenClient = new HttpClient(new OperatorHttpHandler((request, _) =>
+            {
+                if (!request.RequestUri!.AbsolutePath.EndsWith("getPosts", StringComparison.Ordinal))
+                {
+                    return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+                    {
+                        Content = new StringContent(OperatorJobTests.ThreadJson)
+                    });
+                }
+                Assert.Contains(Uri.EscapeDataString("at://did:plc:hidden/app.bsky.feed.post/hidden"),
+                    request.RequestUri.Query);
+                JsonNode body = JsonNode.Parse(OperatorJobTests.PostsForRequest(request))!;
+                if (returned)
+                {
+                    JsonNode hiddenPost = body["posts"]![0]!.DeepClone();
+                    hiddenPost["uri"] = "at://did:plc:hidden/app.bsky.feed.post/hidden";
+                    hiddenPost["author"]!["did"] = "did:plc:hidden";
+                    body["posts"]!.AsArray().Add(hiddenPost);
+                }
+                return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent(body.ToJsonString())
+                });
+            }));
+            report.GetStringBuilder().Clear();
+            await jobs.AuditThreadAsync(OperatorJobTests.RootUri, hiddenClient, cancellationToken);
+            Assert.Contains($"Confirmed qualifying replies absent from database and not excluded: {(returned ? 1 : 0)}",
+                report.ToString());
+            Assert.Contains(returned
+                ? "MATCH | absent | at://did:plc:hidden/app.bsky.feed.post/hidden"
+                : "UNAVAILABLE/UNVERIFIABLE | discovered | at://did:plc:hidden/app.bsky.feed.post/hidden", report.ToString());
+        }
+
         foreach (string scenario in new[] { "unavailable", "edited", "different parent" })
         {
             using var changed = new HttpClient(new OperatorHttpHandler((request, _) =>

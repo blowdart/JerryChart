@@ -15,10 +15,21 @@ namespace JerryChart.Monitor;
 internal static class RetryLoop
 {
     private static readonly int[] s_retrySeconds = [1, 5, 15, 30, 90, 150, 300];
+    private const double RetryJitterFraction = 0.2;
 
     internal static TimeSpan Delay(int consecutiveFailures)
     {
-        return TimeSpan.FromSeconds(s_retrySeconds[Math.Clamp(consecutiveFailures - 1, 0, s_retrySeconds.Length - 1)]);
+        return Delay(consecutiveFailures, Random.Shared.NextDouble());
+    }
+
+    internal static TimeSpan Delay(int consecutiveFailures, double jitter)
+    {
+        ArgumentOutOfRangeException.ThrowIfLessThan(jitter, 0);
+        ArgumentOutOfRangeException.ThrowIfGreaterThan(jitter, 1);
+        int baseSeconds = s_retrySeconds[Math.Clamp(consecutiveFailures - 1, 0, s_retrySeconds.Length - 1)];
+        double jitteredSeconds = baseSeconds * (1 - RetryJitterFraction + (2 * RetryJitterFraction * jitter));
+
+        return TimeSpan.FromSeconds(Math.Min(jitteredSeconds, s_retrySeconds[^1]));
     }
 
     // This service deliberately retries more broadly than the SDK recovery sample, including all InvalidDataException

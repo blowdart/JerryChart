@@ -1,4 +1,4 @@
-export type WorkerPhase = "not-started" | "archive" | "live" | "backfill-running" |
+export type WorkerPhase = "not-started" | "archive" | "live-connecting" | "live" | "backfill-running" |
   "completed" | "stopped" | "failure" | "retrying" |
   "handle-refresh-idle" | "handle-refresh-running" | "handle-refresh-waiting";
 
@@ -63,10 +63,10 @@ export interface ArchiveReplayStatus {
 const archiveEstimateMaximumAgeMilliseconds = 600_000;
 
 const phases: WorkerPhase[] = [
-  "not-started", "archive", "live", "backfill-running", "completed", "stopped", "failure", "retrying",
+  "not-started", "archive", "live-connecting", "live", "backfill-running", "completed", "stopped", "failure", "retrying",
   "handle-refresh-idle", "handle-refresh-running", "handle-refresh-waiting",
 ];
-const activePhases: WorkerPhase[] = ["archive", "live", "backfill-running", "retrying",
+const activePhases: WorkerPhase[] = ["archive", "live-connecting", "live", "backfill-running", "retrying",
   "handle-refresh-idle", "handle-refresh-running", "handle-refresh-waiting"];
 const object = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null;
@@ -159,6 +159,7 @@ export function activitySummary(
   if (replay?.stalledSince) return "Archive stalled.";
   switch (activity.state) {
     case "archive": return "Historical replay in progress.";
+    case "live-connecting": return "Waiting for the first live event; connection not yet confirmed.";
     case "live": return "Listening to live events.";
     case "backfill-running": return "Parent-URI backfill in progress.";
     case "handle-refresh-idle": return "Handle updater is idle; waiting for due refreshes.";
@@ -183,6 +184,7 @@ export function activityOutcome(activity: WorkerActivity, observedAt: string, el
   }
   switch (activity.state) {
     case "archive": return "In progress (historical replay).";
+    case "live-connecting": return "In progress (waiting for the first live event).";
     case "live": return "In progress (live monitoring).";
     case "backfill-running": return "In progress.";
     case "handle-refresh-idle": return "Active (idle; no due refreshes found).";
@@ -227,6 +229,7 @@ export function activityMessage(
       return `Historical replay in progress. Approximate time remaining: ${remainingDuration(estimate.remainingSeconds)}.`;
     }
     case "live": return "Listening to live events. Historical replay has reached live monitoring.";
+    case "live-connecting": return "Waiting for the first live event; connection not yet confirmed.";
     case "backfill-running": return "Parent-URI backfill in progress.";
     case "handle-refresh-idle": return "Handle updater is idle; waiting for due refreshes.";
     case "handle-refresh-running": return "Refreshing actor handles.";

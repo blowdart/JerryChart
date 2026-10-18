@@ -16,7 +16,7 @@ namespace JerryChart.Tests;
 [TestClass]
 public sealed class BackfillDatabaseRetryTests
 {
-    /// <summary>Verifies transient failures retry indefinitely with the exact capped schedule and can recover.</summary>
+    /// <summary>Verifies transient failures retry indefinitely within the jittered capped schedule and recover.</summary>
     /// <returns>A task representing the retry test.</returns>
     [TestMethod]
     public async Task TransientFailuresRetryUntilRecovery()
@@ -37,7 +37,7 @@ public sealed class BackfillDatabaseRetryTests
             waits.Add(delay.TotalSeconds);
             return Task.CompletedTask;
         });
-        Assert.AreSequenceEqual(new double[] { 1, 5, 15, 30, 90, 150, 300, 300, 300, 300 }, waits);
+        AssertDelays(waits, [1, 5, 15, 30, 90, 150, 300, 300, 300, 300]);
         Assert.AreEqual(11, attempts);
     }
 
@@ -67,7 +67,7 @@ public sealed class BackfillDatabaseRetryTests
             waits.Add(delay.TotalSeconds);
             return Task.CompletedTask;
         });
-        Assert.AreSequenceEqual(new double[] { 1, 5, 1, 5 }, waits);
+        AssertDelays(waits, [1, 5, 1, 5]);
     }
 
     /// <summary>Verifies malformed data, configuration, and duplicate-lock errors are not retried.</summary>
@@ -167,5 +167,17 @@ public sealed class BackfillDatabaseRetryTests
         Assert.IsTrue(failure.IsTransient, "A refused local connection must be classified as transient.");
 
         return failure;
+    }
+
+    private static void AssertDelays(IReadOnlyList<double> actual, IReadOnlyList<double> nominal)
+    {
+        Assert.HasCount(nominal.Count, actual);
+        for (int index = 0; index < nominal.Count; index++)
+        {
+            Assert.IsTrue(actual[index] >= nominal[index] * 0.8,
+                $"Delay {actual[index]} is below the jittered lower bound for {nominal[index]} seconds.");
+            Assert.IsTrue(actual[index] <= Math.Min(nominal[index] * 1.2, 300),
+                $"Delay {actual[index]} exceeds the jittered upper bound for {nominal[index]} seconds.");
+        }
     }
 }

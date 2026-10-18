@@ -166,17 +166,24 @@ internal static class JetstreamMonitor
             await activity.ReportArchiveAsync(cancellationToken);
         }
 
-        MonitorLog.ListeningToLive(logger, progress.LiveAfterSeq);
-        await activity.ChangeAsync("live", cancellationToken);
+        MonitorLog.ConnectingToLive(logger, progress.LiveAfterSeq);
+        await activity.ChangeAsync("live-connecting", cancellationToken);
         try
         {
             jetstream.KindFilter = [JetStreamEventKind.Commit, JetStreamEventKind.Identity, JetStreamEventKind.Account];
+            bool receivedLiveEvent = false;
             await foreach (JetstreamEvent item in jetstream.StreamAsync(progress.LiveAfterSeq, maximumReconnectAttempts: 0,
                 cancellationToken))
             {
                 if (item.Sequence is not long sequence)
                 {
                     throw new InvalidDataException("A live Jetstream event has no sequence.");
+                }
+
+                if (!receivedLiveEvent)
+                {
+                    await activity.ChangeAsync("live", cancellationToken);
+                    receivedLiveEvent = true;
                 }
 
                 if (sequence <= progress.LiveAfterSeq)
@@ -199,15 +206,21 @@ internal static class JetstreamMonitor
         }
         catch (JetstreamConnectionException exception) when (exception.ErrorDetail?.Error == "CursorTooOld")
         {
-            store.SaveProgress(progress.ReturnToArchive());
+            SaveArchiveRecovery(progress, store, logger);
             throw;
         }
         catch (InvalidDataException exception) when (
             exception.Message == "The live Jetstream cursor is outside the server's retained events.")
         {
-            store.SaveProgress(progress.ReturnToArchive());
+            SaveArchiveRecovery(progress, store, logger);
             throw;
         }
+    }
+
+    private static void SaveArchiveRecovery(MonitorProgress progress, MonitorStore store, ILogger logger)
+    {
+        store.SaveProgress(progress.ReturnToArchive());
+        MonitorLog.LiveCursorTooOld(logger, progress.LiveAfterSeq);
     }
 
     internal static bool HasForwardArchiveProgress(SnapshotCheckpoint? previous, SnapshotCheckpoint next) =>

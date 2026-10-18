@@ -171,7 +171,7 @@ public sealed class ArchiveStallTests
 
             return Task.CompletedTask;
         }, archiveStall: tracker);
-        Assert.AreSequenceEqual(new double[] { 1, 5, 15, 30, 90, 150, 300, 300, 1 }, delays);
+        AssertRetryDelays(delays, [1, 5, 15, 30, 90, 150, 300, 300, 1]);
         Assert.HasCount(3, logger.Exceptions);
         Assert.IsInstanceOfType<HttpRequestException>(logger.Exceptions[1]);
         Assert.HasCount(1, logger.Events.Where(id => id == 38).ToArray());
@@ -192,6 +192,18 @@ public sealed class ArchiveStallTests
             {
                 Exceptions.Add(exception);
             }
+        }
+    }
+
+    private static void AssertRetryDelays(IReadOnlyList<double> actual, IReadOnlyList<double> nominal)
+    {
+        Assert.HasCount(nominal.Count, actual);
+        for (int index = 0; index < nominal.Count; index++)
+        {
+            Assert.IsTrue(actual[index] >= nominal[index] * 0.8,
+                $"Delay {actual[index]} is below the jittered lower bound for {nominal[index]} seconds.");
+            Assert.IsTrue(actual[index] <= Math.Min(nominal[index] * 1.2, 300),
+                $"Delay {actual[index]} exceeds the jittered upper bound for {nominal[index]} seconds.");
         }
     }
 }

@@ -18,6 +18,9 @@ internal static partial class MonitorLog
     [LoggerMessage(44, LogLevel.Warning, "Operator command canceled. Its report or refresh may be incomplete.")]
     internal static partial void OperatorJobCanceled(ILogger logger);
 
+    [LoggerMessage(45, LogLevel.Warning, "Live Jetstream rejected cursor {Sequence} as too old. Returning to archive from the last durably processed sequence.")]
+    internal static partial void LiveCursorTooOld(ILogger logger, long? sequence);
+
     [LoggerMessage(1, LogLevel.Error, "Replay requires Jetstream__ApiKey (or _JetstreamApiKey) and a wss:// Jetstream v2 host.")]
     internal static partial void InvalidConfiguration(ILogger logger);
 
@@ -30,8 +33,8 @@ internal static partial class MonitorLog
     [LoggerMessage(4, LogLevel.Information, "Starting Jetstream processing attempt. Resuming saved progress: {HasProgress}.")]
     internal static partial void StartingReplay(ILogger logger, bool hasProgress);
 
-    [LoggerMessage(6, LogLevel.Information, "Listening to live Jetstream after sequence {Sequence}.")]
-    internal static partial void ListeningToLive(ILogger logger, long? sequence);
+    [LoggerMessage(6, LogLevel.Information, "Connecting to live Jetstream after sequence {Sequence}.")]
+    internal static partial void ConnectingToLive(ILogger logger, long? sequence);
 
     [LoggerMessage(8, LogLevel.Warning, "Skipping invalid archive record {Sequence}. This record is omitted from monitoring statistics.")]
     internal static partial void SkippingArchiveRecord(ILogger logger, Exception exception, long sequence);

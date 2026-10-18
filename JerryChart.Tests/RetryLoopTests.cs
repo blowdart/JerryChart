@@ -2,11 +2,13 @@
 // Licensed under the MIT License.
 
 using System.Net;
+using System.Net.WebSockets;
 
 using idunno.AtProto.Jetstream;
 
 using JerryChart.Monitor;
 
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 
 namespace JerryChart.Tests;
@@ -126,6 +128,120 @@ public sealed class RetryLoopTests
             await Task.Delay(Timeout.InfiniteTimeSpan, token);
         });
         Assert.AreEqual(1, attempts);
+    }
+
+    /// <summary>Verifies only stream-read transport failures and completion receive the interruption classification.</summary>
+    /// <param name="failure">The enumerator outcome.</param>
+    /// <returns>A task representing stream-read classification.</returns>
+    [TestMethod]
+    [DataRow("io")]
+    [DataRow("websocket")]
+    [DataRow("end")]
+    [DataRow("invalid")]
+    [DataRow("canceled")]
+    [DataRow("refused")]
+    public async Task LiveReadClassificationPreservesUnexpectedFailures(string failure)
+    {
+        Exception? original = failure switch
+        {
+            "io" => new IOException("Any SDK wording"),
+            "websocket" => new WebSocketException(),
+            "invalid" => new InvalidDataException("Malformed event"),
+            "canceled" => new OperationCanceledException(),
+            "refused" => new JetstreamConnectionException(HttpStatusCode.BadRequest, null, null),
+            _ => null
+        };
+        async IAsyncEnumerable<JetstreamEvent> Stream()
+        {
+            await Task.Yield();
+            if (original is not null)
+            {
+                throw original;
+            }
+            yield break;
+        }
+
+        await using IAsyncEnumerator<JetstreamEvent> events = Stream().GetAsyncEnumerator();
+        if (failure is "io" or "websocket" or "end")
+        {
+            LiveStreamInterruptedException exception = await Assert.ThrowsAsync<LiveStreamInterruptedException>(
+                () => JetstreamMonitor.ReadNextLiveAsync(events));
+            Assert.AreSame(original, exception.InnerException);
+        }
+        else
+        {
+            Exception exception = await Assert.ThrowsAsync<Exception>(() => JetstreamMonitor.ReadNextLiveAsync(events));
+            Assert.AreSame(original, exception);
+        }
+    }
+
+    /// <summary>Verifies failure counts exceed the backoff cap and reset on durable progress.</summary>
+    /// <returns>A task representing retry logging.</returns>
+    [TestMethod]
+    public async Task RetryLogsDistinguishTransportFromProcessingAndCountFailures()
+    {
+        using var shutdown = new CancellationTokenSource();
+        var logger = new RetryLogger();
+        int attempts = 0;
+        var processingFailure = new IOException("Processing failed, not a stream read.");
+        await RetryLoop.RunAsync((processed, _) =>
+        {
+            attempts++;
+            if (attempts == 10)
+            {
+                processed();
+                throw processingFailure;
+            }
+            throw new LiveStreamInterruptedException(new IOException("SDK diagnostic"));
+        }, logger, shutdown.Token, (_, _) =>
+        {
+            if (attempts == 10)
+            {
+                shutdown.Cancel();
+            }
+            return Task.CompletedTask;
+        });
+
+        Assert.AreSequenceEqual(new[] { 1, 2, 3, 4, 5, 6, 7, 8, 9, 1 }, logger.Failures);
+        Assert.AreEqual(9, logger.Warnings);
+        Assert.AreEqual(9, logger.DebugDetails);
+        Assert.AreSame(processingFailure, logger.Error);
+    }
+
+    private sealed class RetryLogger : ILogger
+    {
+        internal List<int> Failures { get; } = [];
+        internal int Warnings { get; private set; }
+        internal int DebugDetails { get; private set; }
+        internal Exception? Error { get; private set; }
+
+        public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+        public bool IsEnabled(LogLevel logLevel) => true;
+        public void Log<TState>(LogLevel logLevel, EventId eventId, TState state, Exception? exception,
+            Func<TState, Exception?, string> formatter)
+        {
+            foreach (KeyValuePair<string, object?> field in (IEnumerable<KeyValuePair<string, object?>>)state!)
+            {
+                if (field.Key == "ConsecutiveFailures")
+                {
+                    Failures.Add((int)field.Value!);
+                }
+            }
+            if (logLevel == LogLevel.Warning)
+            {
+                Warnings++;
+                Assert.IsNull(exception);
+            }
+            else if (logLevel == LogLevel.Debug)
+            {
+                DebugDetails++;
+                Assert.IsNotNull(exception);
+            }
+            else if (logLevel == LogLevel.Error)
+            {
+                Error = exception;
+            }
+        }
     }
 
     private static void AssertDelays(IReadOnlyList<double> actual, IReadOnlyList<double> nominal)

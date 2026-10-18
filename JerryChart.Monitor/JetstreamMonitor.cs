@@ -172,9 +172,11 @@ internal static class JetstreamMonitor
         {
             jetstream.KindFilter = [JetStreamEventKind.Commit, JetStreamEventKind.Identity, JetStreamEventKind.Account];
             bool receivedLiveEvent = false;
-            await foreach (JetstreamEvent item in jetstream.StreamAsync(progress.LiveAfterSeq, maximumReconnectAttempts: 0,
-                cancellationToken))
+            await using IAsyncEnumerator<JetstreamEvent> events = jetstream.StreamAsync(
+                progress.LiveAfterSeq, maximumReconnectAttempts: 0, cancellationToken).GetAsyncEnumerator(cancellationToken);
+            while (await ReadNextLiveAsync(events))
             {
+                JetstreamEvent item = events.Current;
                 if (item.Sequence is not long sequence)
                 {
                     throw new InvalidDataException("A live Jetstream event has no sequence.");
@@ -183,6 +185,7 @@ internal static class JetstreamMonitor
                 if (!receivedLiveEvent)
                 {
                     await activity.ChangeAsync("live", cancellationToken);
+                    MonitorLog.LiveEventsResumed(logger);
                     receivedLiveEvent = true;
                 }
 
@@ -215,6 +218,30 @@ internal static class JetstreamMonitor
             SaveArchiveRecovery(progress, store, logger);
             throw;
         }
+    }
+
+    internal static async Task<bool> ReadNextLiveAsync(IAsyncEnumerator<JetstreamEvent> events)
+    {
+        bool hasNext;
+        try
+        {
+            hasNext = await events.MoveNextAsync();
+        }
+        catch (IOException exception)
+        {
+            throw new LiveStreamInterruptedException(exception);
+        }
+        catch (System.Net.WebSockets.WebSocketException exception)
+        {
+            throw new LiveStreamInterruptedException(exception);
+        }
+
+        if (!hasNext)
+        {
+            throw new LiveStreamInterruptedException(null);
+        }
+
+        return true;
     }
 
     private static void SaveArchiveRecovery(MonitorProgress progress, MonitorStore store, ILogger logger)

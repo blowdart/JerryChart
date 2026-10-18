@@ -355,6 +355,16 @@ has delivered data, not merely that connection was attempted. An expired live
 cursor returns to the archive after the last durably processed sequence, rather
 than jumping to the live tip.
 
+Live stream completion or transport interruption logs a warning identifying
+JerryChart as the owner of reconnection from durable progress; SDK-managed live
+reconnects are deliberately disabled. The underlying exception and stack trace
+are retained at Debug level. Processing failures, malformed events, and server
+refusals retain Error-level diagnostics. Retry logs include the consecutive
+monitor failure count, which continues past the backoff cap and resets when an
+event is durably processed. The Information-level message
+`Live Jetstream resumed; receiving events.` is emitted once per connection on
+its first sequenced event, not when the connection attempt starts.
+
 The snapshot's `onArchiveError` callback explicitly skips invalid records when
 a sequence is available, or invalid blocks when decoding fails before rows are
 available. Each skip logs a warning with the exception and, for records, its

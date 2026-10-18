@@ -37,6 +37,43 @@ function loadModule(relative, overrides = {}) {
   return load(relative);
 }
 
+test("home page explains deleted-reply retention between top posts and history/users", async () => {
+  const TopReplyPosts = () => null;
+  const noop = () => null;
+  const { default: Home } = loadModule("app\\page.tsx", {
+    "next/image": { default: noop },
+    "@/components/refresh-statistics": { RefreshStatistics: noop },
+    "@/components/processing-status": { ProcessingStatus: noop },
+    "@/components/profile-hover-card": { ProfileHoverCard: noop },
+    "@/components/reply-history-dialog": { ReplyHistoryDialog: noop },
+    "@/components/reply-authors-dialog": { ReplyAuthorsDialog: noop },
+    "@/components/statistics-last-updated": { StatisticsLastUpdated: noop },
+    "@/components/top-reply-posts": { TopReplyPosts },
+    "@/lib/api": {
+      getReplySummary: async () => ({ totalReplies: 12, rightJerryReplies: 12, wrongJerryReplies: 0 }),
+      getTopRightJerryAuthors: async () => [],
+      getMonthlyRightJerryReplies: async () => [],
+      getStatisticsLastUpdated: async () => ({}),
+      getTopRightJerryPosts: async () => [],
+      getInitialProcessingStatus: async () => ({}),
+    },
+  });
+  const page = await Home();
+  const markup = renderToStaticMarkup(page);
+  assert.ok(!markup.includes("(c) 2026"));
+  assert.ok(!markup.includes("Made with"));
+  const children = React.Children.toArray(page.props.children);
+  const topIndex = children.findIndex(child => child.type === TopReplyPosts);
+  assert.ok(topIndex >= 0);
+  const caveat = children[topIndex + 1];
+  assert.equal(caveat.type, "p");
+  assert.equal(caveat.props.children,
+    '* "Jerry No" replies that are subsequently deleted are not removed from the analysis.');
+  const tables = renderToStaticMarkup(children[topIndex + 2]);
+  assert.match(tables, /last six months/);
+  assert.match(tables, /Top 10 users/);
+});
+
 test("detail dialogs expose icon-only close buttons with accessible names, tooltips and focus indicators", () => {
   let closed = 0;
   const hooks = {

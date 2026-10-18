@@ -39,6 +39,22 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
       <body className="min-h-full flex flex-col">
         {children}
         <footer className="mx-auto mt-auto w-full max-w-4xl px-6 py-6 text-right text-sm text-muted-foreground">
+          <p className="mb-1">
+            (c) 2026{" "}
+            <a href="https://bsky.app/profile/blowdart.me" className="underline underline-offset-4">
+              Barry Dorrans
+            </a>
+          </p>
+          <p className="mb-2">
+            Made with{" "}
+            <a href="https://github.com/blowdart/idunno.Bluesky" className="underline underline-offset-4">
+              idunno.Bluesky
+            </a>
+            {" "}and{" "}
+            <a href="https://aspire.dev/" className="underline underline-offset-4">
+              Aspire
+            </a>
+          </p>
           <p className="mb-2">
             <a href="https://github.com/blowdart/JerryChart" className="underline underline-offset-4">
               Get the source code on GitHub

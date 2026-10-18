@@ -83,6 +83,9 @@ export default async function Home() {
         </CardContent>
       </Card>
       <TopReplyPosts posts={topPosts} />
+      <p className="text-sm text-muted-foreground">
+        * &quot;Jerry No&quot; replies that are subsequently deleted are not removed from the analysis.
+      </p>
       <div className="grid items-start gap-6 md:grid-cols-2">
       <Card className="min-w-0">
         <CardHeader>
@@ -105,22 +108,6 @@ export default async function Home() {
       </div>
       <footer className="space-y-1 border-t pt-6 text-right text-sm text-muted-foreground">
         <RefreshStatistics />
-        <p>
-          (c) 2006{" "}
-          <a href="https://bsky.app/profile/blowdart.me" className="underline underline-offset-4">
-            Barry Dorrans
-          </a>
-        </p>
-        <p>
-          Made with{" "}
-          <a href="https://github.com/blowdart/idunno.Bluesky" className="underline underline-offset-4">
-            idunno.Bluesky
-          </a>
-          {" "}and{" "}
-          <a href="https://aspire.dev/" className="underline underline-offset-4">
-            Aspire
-          </a>
-        </p>
         <StatisticsLastUpdated updatedAt={lastUpdated} />
         <ProcessingStatus initial={processingStatus} />
       </footer>

@@ -94,6 +94,13 @@ test("privacy policy is readable without API access and linked in the shared foo
   assert.ok(layout.includes("justify-end"));
   assert.ok(layout.includes('aria-label="Legal"'));
   assert.ok(layout.includes("Page content"));
+  const footer = layout.slice(layout.indexOf("<footer"));
+  assert.ok(footer.includes('href="https://bsky.app/profile/blowdart.me"'));
+  assert.ok(footer.includes('href="https://github.com/blowdart/idunno.Bluesky"'));
+  assert.ok(footer.includes('href="https://aspire.dev/"'));
+  assert.ok(footer.includes("(c) 2026"));
+  assert.ok(footer.indexOf("(c) 2026") < footer.indexOf("Made with"));
+  assert.ok(footer.indexOf("Made with") < footer.indexOf("Get the source code"));
 });
 
 test("short terms explain limitations, respectful use, privacy and contact", () => {

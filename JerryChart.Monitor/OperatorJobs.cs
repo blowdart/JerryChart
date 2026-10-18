@@ -17,7 +17,8 @@ internal sealed class OperatorJobs(MySqlDataSource source, TextWriter output)
 {
     internal async Task<int> AuditThreadAsync(string post, HttpClient httpClient, CancellationToken cancellationToken)
     {
-        AuditedThread thread = await new ThreadAudit(httpClient).ReadAsync(post, cancellationToken);
+        var audit = new ThreadAudit(httpClient);
+        AuditedThread thread = await audit.ReadAsync(post, cancellationToken);
         await using MySqlConnection connection = await source.OpenConnectionAsync(cancellationToken);
         await using MySqlTransaction transaction = await connection.BeginTransactionAsync(
             System.Data.IsolationLevel.RepeatableRead, cancellationToken);
@@ -57,29 +58,40 @@ internal sealed class OperatorJobs(MySqlDataSource source, TextWriter output)
             }
         }
 
+        DateTimeOffset databaseObservedAt = DateTimeOffset.UtcNow;
         await transaction.CommitAsync(cancellationToken);
+        IReadOnlyDictionary<string, VerifiedAuditPost> verified = await audit.VerifyAsync(
+            stored.Concat(thread.Replies.Select(reply => reply.Uri)), cancellationToken);
         string parentDid = new AtUri(thread.Uri).Authority.ToString();
-        int matching = thread.Replies.Count(reply => reply.Qualifies);
-        int missing = thread.Replies.Count(reply =>
-            reply.Qualifies && !stored.Contains(reply.Uri) && !excluded.Contains(reply.AuthorDid) && !excluded.Contains(parentDid));
+        bool Matches(VerifiedAuditPost reply) => reply.Qualifies && reply.ParentUri == thread.Uri;
+        bool IsExcluded(VerifiedAuditPost reply) => excluded.Contains(reply.AuthorDid) || excluded.Contains(parentDid);
+        int confirmed = linked.Count(uri => verified.TryGetValue(uri, out VerifiedAuditPost? reply) && Matches(reply));
+        int unavailable = linked.Count(uri => !verified.ContainsKey(uri));
+        int missing = verified.Values.Count(reply => Matches(reply) && !stored.Contains(reply.Uri) && !IsExcluded(reply));
         await output.WriteLineAsync($"Thread: {thread.Uri}");
-        await output.WriteLineAsync($"AppView reported replies: {thread.ReportedReplies}; visible direct replies: {thread.Replies.Count}; blocked/missing entries: {thread.HiddenReplies}.");
-        await output.WriteLineAsync($"Visible qualifying direct replies: {matching}; stored for this parent: {linked.Count}; qualifying absent and not excluded: {missing}.");
-        await output.WriteLineAsync("Read-only audit. Public thread results may be incomplete; absent replies may still arrive through archive replay. Stored replies may no longer be publicly visible.");
-        foreach (AuditedReply reply in thread.Replies)
+        await output.WriteLineAsync($"Database snapshot read completed (UTC): {databaseObservedAt:O}; public verification completed (UTC): {DateTimeOffset.UtcNow:O}.");
+        await output.WriteLineAsync($"AppView reported replies: {thread.ReportedReplies}; direct replies returned by thread: {thread.Replies.Count}; blocked/missing entries: {thread.HiddenReplies}.");
+        await output.WriteLineAsync($"Stored for this parent: {linked.Count}; confirmed stored matches: {confirmed}; stored now nonmatching or different parent: {linked.Count - confirmed - unavailable}; stored unavailable/unverifiable: {unavailable}.");
+        await output.WriteLineAsync($"Confirmed qualifying replies absent from database and not excluded: {missing}.");
+        await output.WriteLineAsync("Discovery completeness: NOT ESTABLISHED. Public thread results may be incomplete; no missing replies found does not prove an exhaustive count.");
+        await output.WriteLineAsync("Read-only audit. getPosts verifies each stored/discovered URI independently. An omitted post is unavailable/unverifiable, not confirmed deleted. HTTP or malformed-response failures make the audit inconclusive and fail the command.");
+        await output.WriteLineAsync("Counts retain historical matches, including replies subsequently edited or deleted. Database and public observations are not atomic.");
+        var discovered = thread.Replies.Select(reply => reply.Uri).ToHashSet(StringComparer.Ordinal);
+        foreach (string uri in stored.Concat(discovered).Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal))
         {
-            string status = excluded.Contains(reply.AuthorDid) || excluded.Contains(parentDid) ? "excluded" : "absent";
-            if (stored.Contains(reply.Uri))
+            if (!verified.TryGetValue(uri, out VerifiedAuditPost? reply))
             {
-                status = linked.Contains(reply.Uri) ? "stored" : "stored, parent unresolved or different";
+                await output.WriteLineAsync($"UNAVAILABLE/UNVERIFIABLE | {(stored.Contains(uri) ? "stored" : "discovered")} | {Printable(uri)}");
+                continue;
             }
-            await output.WriteLineAsync($"{(reply.Qualifies ? "MATCH" : "NO MATCH")} | {status} | {reply.Uri} | {Printable(reply.Text)}");
-        }
 
-        var visible = thread.Replies.Select(reply => reply.Uri).ToHashSet(StringComparer.Ordinal);
-        foreach (string uri in linked.Where(uri => !visible.Contains(uri)).Order(StringComparer.Ordinal))
-        {
-            await output.WriteLineAsync($"STORED, NOT VISIBLE | {Printable(uri)}");
+            string status = IsExcluded(reply) ? "excluded" : "absent";
+            if (stored.Contains(uri))
+            {
+                status = linked.Contains(uri) ? "stored" : "stored, parent unresolved or different";
+            }
+            string discovery = discovered.Contains(uri) ? "returned by thread" : "absent from thread response";
+            await output.WriteLineAsync($"{(Matches(reply) ? "MATCH" : "NO MATCH")} | {status} | {Printable(uri)} | {discovery} | {Printable(reply.Text)}");
         }
 
         return 0;

@@ -733,13 +733,24 @@ dotnet run --project JerryChart.Monitor -- replay-status
 
 `audit-thread` accepts HTTPS `bsky.app` or `bluesky.app` post links with a DID or
 handle, and post `at://` URIs with either authority. Handles are resolved through
-the fixed, SSRF-protected public AppView. It lists visible **direct** replies,
-whether each matches the ingestion phrase rule, and whether it is stored,
-excluded, or absent. Stored hits with unresolved/different parent metadata and
-stored replies no longer visible are identified separately. Qualifying counts
-count each post once and exclude nested replies to other posts. Public thread
-results can be incomplete, and an absent reply may still arrive through archive
-replay; this is not an import, repair, or proof of historical completeness.
+the fixed, SSRF-protected public AppView. Thread results discover candidate direct
+replies; `getPosts` independently verifies every stored or discovered reply URI in
+batches of up to 25. A repeatable-read database snapshot is compared with current
+public records, checking the phrase and immediate parent, deduplicated by URI.
+The report separates confirmed stored matches, now-nonmatching/different-parent
+records, unavailable/unverifiable records, excluded replies, unresolved database
+parent metadata, and confirmed qualifying replies absent from the database.
+Absence from a thread response does not imply deletion or public unavailability.
+HTTP and malformed-response failures fail the command rather than reporting a
+successful or complete audit. Observation timestamps are printed; public and
+database observations are not atomic.
+
+Discovery completeness is **not established**: the thread API is not exhaustive,
+and there is no search, repository crawl, or archive replay in this command.
+Zero discovered missing replies is not proof of completeness. Historical counts
+retain matches subsequently edited or deleted; unavailable posts are not assumed
+deleted. The website displays this retention caveat below the top-five posts.
+The audit is read-only and never imports, repairs, or changes counts.
 
 `refresh-actor` immediately resolves one already-tracked, non-excluded DID using
 the same profile/relay clients and daily/unknown/inactive refresh intervals as

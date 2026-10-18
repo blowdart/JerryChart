@@ -24,6 +24,72 @@ far, not necessarily complete historical coverage.
 | `JerryChart.Web` | Next.js App Router frontend with shadcn/ui components |
 | `JerryChart.Tests` | MSTest tests running on Microsoft.Testing.Platform |
 
+## Production container images
+
+Build all three Linux images from the repository root. The .NET Dockerfile has
+separate `api` and `monitor` targets; the frontend runs Next.js standalone output.
+All three containers run as non-root users and listen on port 8080.
+These are framework-dependent .NET deployments, not native AOT publishes.
+
+```powershell
+docker build --target api -t jerrychart-api:local .
+docker build --target monitor -t jerrychart-monitor:local .
+docker build -f JerryChart.Web\Dockerfile -t jerrychart-web:local .
+```
+
+Production images are intended for the existing DigitalOcean Container Registry,
+using separate `jerrychart-api`, `jerrychart-monitor`, and `jerrychart-web`
+repositories alongside unrelated applications. Packaging does not publish images
+or deploy services automatically. A release should select all three images from
+one tested commit and record their immutable digests.
+
+Deploy Web as the public App Platform service, API as an internal-only service,
+and Monitor as a single worker instance. AppHost is local orchestration and is not
+part of these images. Set Web's runtime `API_BASE_URL` to the API's internal URL;
+never expose it through a `NEXT_PUBLIC_` variable. Neither the API nor the database
+needs a public application route.
+
+Supply `ConnectionStrings__jerrychart` separately to API and Monitor using
+App Platform encrypted runtime variables and dedicated database users. For
+DigitalOcean Managed MySQL, use `SslMode=VerifyFull` and `SslCa` pointing to the
+cluster CA certificate provisioned inside each container at deployment time.
+Do not bake credentials into images or disable certificate verification.
+The build context excludes local environment files and certificate/key files.
+Web needs no database credentials. Monitor additionally needs the encrypted
+runtime `Jetstream__ApiKey`; keep it stopped until the migrated database and
+production configuration have been verified.
+
+Both .NET services currently initialize the shared schema at startup, so their
+database grants must cover those operations, not just normal queries. Configure
+startup grace periods for schema initialization. Use `/health` for API readiness
+and `/alive` for liveness; see the health-check guidance below for the monitor.
+Database rollback requires its own migration and backup strategy; reverting
+container images does not revert schema changes.
+
+### Publishing release images
+
+The **Publish release images** GitHub Actions workflow is manually dispatched
+from `main`. It requires completed successful push runs of CI Build, CodeQL, and
+the GitHub Actions security scan for that exact commit. It does not rerun failed
+checks. It builds without DigitalOcean credentials, then transfers the images
+to a separate publish job using the GitHub environment named **`release`**.
+
+Create that environment in repository **Settings > Environments** before running
+the workflow. Restrict deployment branches to `main` and configure required
+reviewers if supported by the repository's GitHub plan. Add
+`DIGITALOCEAN_ACCESS_TOKEN` as an **environment secret**, not a repository secret.
+Use a dedicated DigitalOcean token with only the registry permissions needed
+to log in and push images; it does not need App Platform deployment or database
+administration access. Registry credentials expire after 15 minutes.
+
+The registry plan must allow four repositories in total: the existing `maddybot`
+repository plus the three JerryChart repositories. Images are tagged with the
+source commit, workflow run ID, and attempt number; there is no floating `latest`
+tag or automatic deployment. The publish job records the three immutable image
+references in its summary and in the `release-image-references` artifact. A
+failed push can leave a partial set in the registry: only use a release after the
+entire workflow succeeds and all three references have been recorded.
+
 ## Minimum requirements
 
 | Requirement | Minimum / supported setup | Installation |

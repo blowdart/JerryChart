@@ -102,8 +102,12 @@ to require production approval (subject to GitHub plan support). Add:
 - Environment variable **`DIGITALOCEAN_APP_ID`**: `01d3cf77-d726-443d-813f-2b08e26db2ef`.
 - Environment secret **`DIGITALOCEAN_ACCESS_TOKEN`**: a separate deployment token
   with `app:update` and its required scopes `app:read`, `regions:read`,
-  `sizes:read`, and `actions:read`. It does not need registry push, app
-  create/delete, database write, or database credential access. DigitalOcean
+  `sizes:read`, and `actions:read`. Include `database:read` for validation of
+  the attached managed database and `vpc:read` for private-network visibility.
+  If DigitalOcean explicitly rejects credential resolution, it may also require
+  `database:view_credentials`; this exposes database credentials and should not
+  be granted speculatively. It does not need registry push, app create/delete,
+  or database write. DigitalOcean
   scopes are team-wide, not restricted to this app; the script also validates
   the app and component identities. Keep the `release` token registry-only.
 
@@ -115,6 +119,22 @@ instance counts, startup commands, database bindings, and encrypted environment
 values are preserved. The full spec remains in memory: it is never logged or
 uploaded as an artifact. Unexpected component names or registry sources fail
 before updating the app.
+
+**This is a full app-spec replacement, not an image-only PATCH.** Omitting
+`vpc` from the submitted spec disconnects the app's private network. Before any
+write, the script requires the fetched spec to contain a valid, nonempty VPC ID,
+then requires its immediate recheck to contain the same ID. No VPC ID is
+hard-coded or separately configured. The active deployment's spec must also
+expose the same VPC before any update. Missing, malformed, or changed VPC data aborts without
+submitting an update, including when permissions hide the network. It never
+fills in missing network data from defaults or a historical deployment. Ensure
+the token can read the complete configuration; adding permissions alone is not
+proof of visibility. The guard must pass with the actual release token.
+The update response and every monitored deployment spec must also retain the
+required VPC. A mismatch after acceptance fails with explicit incident guidance;
+it cannot undo an already accepted update and does not attempt another write.
+Do not rerun an older workflow attempt to pick up this fix: retries use that
+run's original workflow and source commit.
 
 Do not edit the app configuration or start a manual deployment while this job
 runs. Workflow releases are serialized; a pending/running or pinned deployment

@@ -77,12 +77,35 @@ def require_idle(app):
         raise DeploymentError("The app is pinned to a deployment; unpin it before releasing.")
 
 
+def require_vpc(spec, expected_vpc_id=None, *, update_accepted=False):
+    vpc = spec.get("vpc") if isinstance(spec, dict) else None
+    vpc_id = vpc.get("id") if isinstance(vpc, dict) else None
+    try:
+        valid = isinstance(vpc_id, str) and uuid.UUID(vpc_id).int != 0
+    except ValueError:
+        valid = False
+    if not valid or (expected_vpc_id is not None and vpc_id != expected_vpc_id):
+        recovery = (
+            "The update was already accepted; inspect App Platform Networking and Activity immediately. "
+            "No automatic rollback or second update was submitted."
+            if update_accepted else
+            "No update was submitted. Check vpc:read token scope and App Platform Networking; "
+            "do not remove the VPC requirement or infer a replacement spec."
+        )
+        raise DeploymentError(f"App spec is missing the required VPC or references a different VPC. {recovery}")
+
+    return vpc_id
+
+
 def deploy(app_id, tag, request, sleep=time.sleep, clock=time.monotonic):
     path = f"/apps/{app_id}"
     app = request("GET", path)["app"]
     require_idle(app)
-    spec = updated_spec(app["spec"], tag)
+    expected_vpc_id = require_vpc(app.get("spec"))
     active = app.get("active_deployment") or {}
+    require_vpc(active.get("spec"), expected_vpc_id)
+    spec = updated_spec(app["spec"], tag)
+    require_vpc(spec, expected_vpc_id)
     if app["spec"] == spec and active.get("phase") == "ACTIVE" and active.get("spec") == spec:
         print("The requested release is already active.")
         return active["id"]
@@ -91,9 +114,12 @@ def deploy(app_id, tag, request, sleep=time.sleep, clock=time.monotonic):
     # conditional app-spec update; operators must avoid edits during this job.
     latest = request("GET", path)["app"]
     require_idle(latest)
+    require_vpc(latest.get("spec"), expected_vpc_id)
+    require_vpc((latest.get("active_deployment") or {}).get("spec"), expected_vpc_id)
     if latest != app:
         raise DeploymentError("The app changed while preparing deployment; refusing a stale update.")
     response = request("PUT", path, {"spec": spec})["app"]
+    require_vpc(response.get("spec"), expected_vpc_id, update_accepted=True)
     deployment = response.get("pending_deployment")
     if not deployment:
         deployment = response.get("in_progress_deployment")
@@ -125,6 +151,7 @@ def deploy(app_id, tag, request, sleep=time.sleep, clock=time.monotonic):
                 "Inspect its Activity details in App Platform; no automatic rollback was attempted."
             )
         print(f"Deployment {deployment_id}: {phase}.")
+        require_vpc(deployment.get("spec"), expected_vpc_id, update_accepted=True)
         if phase == "ACTIVE":
             if deployment.get("spec") != spec:
                 raise DeploymentError("Active deployment does not match the submitted release spec.")

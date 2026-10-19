@@ -14,12 +14,14 @@ import deploy
 
 APP_ID = "01d3cf77-d726-443d-813f-2b08e26db2ef"
 DEPLOYMENT_ID = "00000000-0000-0000-0000-000000000001"
+VPC_ID = "6ddd3315-2e23-43a6-9842-475db7fd97c5"
 
 
 def fixture():
     spec = {
         "name": "jerrychart",
         "region": "nyc",
+        "vpc": {"id": VPC_ID},
         "envs": [{"key": "SECRET", "type": "SECRET", "value": "EV[encrypted-value]"}],
         "databases": [{"name": "database", "production": True}],
         "ingress": {"rules": [{"component": {"name": "jerrychart-web"}}]},
@@ -39,10 +41,102 @@ def fixture():
                 "health_check": {"http_path": "/health"},
             })
     spec["services"].append({"name": "unrelated", "image": {"tag": "untouched"}})
-    return {"spec": spec}
+    return {"spec": spec, "active_deployment": {
+        "id": "00000000-0000-0000-0000-000000000002",
+        "phase": "ACTIVE", "spec": copy.deepcopy(spec),
+    }}
 
 
 class DeploymentTests(unittest.TestCase):
+    def test_active_network_must_be_visible_and_agree_before_put(self):
+        for stage in ("initial", "recheck"):
+            for vpc in (None, {"id": DEPLOYMENT_ID}):
+                with self.subTest(stage=stage, vpc=vpc):
+                    calls = []
+
+                    def request(method, path, body=None):
+                        calls.append(method)
+                        self.assertEqual(method, "GET")
+                        app = fixture()
+                        if stage == "initial" or len(calls) == 2:
+                            app["active_deployment"]["spec"]["vpc"] = vpc
+                        return {"app": app}
+
+                    with self.assertRaisesRegex(deploy.DeploymentError, "No update was submitted"):
+                        deploy.deploy(APP_ID, "new", request)
+                    self.assertEqual(len(calls), 1 if stage == "initial" else 2)
+
+    def test_network_is_preserved_from_api_not_a_hard_coded_id(self):
+        for network_id in (VPC_ID, "11111111-2222-4333-8444-555555555555"):
+            with self.subTest(network_id=network_id), patch("sys.stdout", io.StringIO()):
+                app = fixture()
+                app["spec"]["vpc"] = {"id": network_id, "egress_ips": [{"ip": "10.0.0.1"}]}
+                app["active_deployment"]["spec"] = copy.deepcopy(app["spec"])
+                expected = deploy.updated_spec(app["spec"], "new")
+                calls = []
+
+                def request(method, path, body=None):
+                    calls.append(method)
+                    if method == "PUT":
+                        self.assertEqual(body["spec"], expected)
+                        self.assertEqual(body["spec"]["vpc"], app["spec"]["vpc"])
+                        return {"app": {"spec": expected, "pending_deployment": {"id": DEPLOYMENT_ID}}}
+                    if "/deployments/" in path:
+                        return {"deployment": {"phase": "ACTIVE", "spec": expected}}
+                    return {"app": app}
+
+                self.assertEqual(deploy.deploy(APP_ID, "new", request), DEPLOYMENT_ID)
+                self.assertEqual(calls.count("PUT"), 1)
+
+    def test_incomplete_or_wrong_vpc_never_reaches_put(self):
+        for stage in ("initial", "recheck"):
+            for vpc in (None, {}, {"id": ""}, {"id": "not-a-uuid"}, {"id": None},
+                        {"id": 42}, {"id": "00000000-0000-0000-0000-000000000000"}, "invalid"):
+                with self.subTest(stage=stage, vpc=vpc):
+                    calls = []
+
+                    def request(method, path, body=None):
+                        calls.append(method)
+                        self.assertEqual(method, "GET", "Unsafe app-spec PUT must never be attempted.")
+                        app = fixture()
+                        if stage == "initial" or len(calls) == 2:
+                            if vpc is None:
+                                app["spec"].pop("vpc")
+                            else:
+                                app["spec"]["vpc"] = vpc
+                        return {"app": app}
+
+                    with self.assertRaisesRegex(deploy.DeploymentError, "No update was submitted"):
+                        deploy.deploy(APP_ID, "new", request)
+                    self.assertEqual(len(calls), 1 if stage == "initial" else 2)
+
+    def test_vpc_visibility_loss_after_acceptance_fails_without_another_write(self):
+        for stage in ("update-response", "deploying", "active"):
+            for vpc in (None, {}, {"id": DEPLOYMENT_ID}):
+                with self.subTest(stage=stage, vpc=vpc), patch("sys.stdout", io.StringIO()):
+                    calls = []
+                    good = deploy.updated_spec(fixture()["spec"], "new")
+                    bad = copy.deepcopy(good)
+                    if vpc is None:
+                        bad.pop("vpc")
+                    else:
+                        bad["vpc"] = vpc
+
+                    def request(method, path, body=None):
+                        calls.append(method)
+                        if method == "PUT":
+                            self.assertEqual(body["spec"]["vpc"], {"id": VPC_ID})
+                            return {"app": {"spec": bad if stage == "update-response" else good,
+                                            "pending_deployment": {"id": DEPLOYMENT_ID}}}
+                        if "/deployments/" in path:
+                            return {"deployment": {"spec": bad,
+                                                   "phase": "ACTIVE" if stage == "active" else "DEPLOYING"}}
+                        return {"app": fixture()}
+
+                    with self.assertRaisesRegex(deploy.DeploymentError, "update was already accepted"):
+                        deploy.deploy(APP_ID, "new", request)
+                    self.assertEqual(calls.count("PUT"), 1)
+
     def test_only_image_tags_change_and_input_is_untouched(self):
         app = fixture()
         original = copy.deepcopy(app)
@@ -108,7 +202,7 @@ class DeploymentTests(unittest.TestCase):
             calls.append((method, path, body))
             if method == "PUT":
                 self.assertEqual(body, {"spec": spec})
-                return {"app": {"pending_deployment": {"id": DEPLOYMENT_ID}}}
+                return {"app": {"spec": spec, "pending_deployment": {"id": DEPLOYMENT_ID}}}
             if "/deployments/" in path:
                 return {"deployment": {"phase": next(phases), "spec": spec,
                                        "progress": {"error_steps": 2}}}
@@ -159,7 +253,7 @@ class DeploymentTests(unittest.TestCase):
                 def request(method, path, body=None):
                     calls.append((method, path))
                     if method == "PUT":
-                        return {"app": response}
+                        return {"app": {"spec": spec, **response}}
                     if "/deployments/" in path:
                         return {"deployment": {"phase": "ACTIVE", "spec": spec}}
                     return {"app": fixture()}
@@ -193,7 +287,8 @@ class DeploymentTests(unittest.TestCase):
 
         def request(method, _path, _body=None):
             if method == "PUT":
-                return {"app": {"pending_deployment": {"id": DEPLOYMENT_ID}}}
+                return {"app": {"spec": deploy.updated_spec(app["spec"], "new"),
+                                "pending_deployment": {"id": DEPLOYMENT_ID}}}
             return {"app": app}
 
         with patch("sys.stdout", io.StringIO()), self.assertRaisesRegex(deploy.DeploymentError, "Timed out"):
@@ -204,7 +299,8 @@ class DeploymentTests(unittest.TestCase):
 
         def request(method, path, body=None):
             if method == "PUT":
-                return {"app": {"pending_deployment": {"id": DEPLOYMENT_ID}}}
+                return {"app": {"spec": deploy.updated_spec(app["spec"], "new"),
+                                "pending_deployment": {"id": DEPLOYMENT_ID}}}
             if "/deployments/" in path:
                 return {"deployment": {"phase": "ACTIVE", "spec": app["spec"]}}
             return {"app": app}

@@ -180,6 +180,12 @@ test("author search retains its outward high-contrast focus outline outside the 
   const authors = [
     { did: "did:plc:alice", handle: "alice.bsky.social", accountStatus: null, replyCount: 12 },
     { did: "did:plc:alicia", handle: "alicia.bsky.social", accountStatus: null, replyCount: 8 },
+    ...Array.from({ length: 25 }, (_, index) => ({
+      did: `did:plc:other-${index}`,
+      handle: `other-${index}.bsky.social`,
+      accountStatus: null,
+      replyCount: 1,
+    })),
   ];
   const { ReplyAuthorsDialog } = loadModule("components\\reply-authors-dialog.tsx", {
     react: hooks,
@@ -221,7 +227,19 @@ test("author search retains its outward high-contrast focus outline outside the 
   assert.ok(input.props.className.split(" ").includes("focus-visible:outline-2"));
   assert.ok(input.props.className.split(" ").includes("focus-visible:outline-offset-2"));
   assert.ok(!input.props.className.split(" ").includes("focus-visible:-outline-offset-2"));
-  input.props.onChange({ target: { value: "alice.bsky.social" } });
+  input.props.onChange({ target: { value: "@" } });
+  tree = renderSearch();
+  assert.equal(React.Children.count(findElement(tree, "datalist").props.children), 0);
+
+  findElement(tree, "input").props.onChange({ target: { value: "@ali" } });
+  tree = renderSearch();
+  assert.equal(React.Children.count(findElement(tree, "datalist").props.children), 2);
+
+  findElement(tree, "input").props.onChange({ target: { value: "other" } });
+  tree = renderSearch();
+  assert.equal(React.Children.count(findElement(tree, "datalist").props.children), 20);
+
+  findElement(tree, "input").props.onChange({ target: { value: "alice.bsky.social" } });
   tree = renderSearch();
   findElement(tree, "form").props.onSubmit({ preventDefault() {} });
   tree = renderSearch();

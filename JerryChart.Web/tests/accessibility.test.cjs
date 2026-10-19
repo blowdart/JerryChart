@@ -235,7 +235,33 @@ test("author search retains its outward high-contrast focus outline outside the 
   assert.match(markup, /Multiple matching handles; refine your search\./);
 });
 
-test("expanded author list owns scrolling and keeps every column header sticky without changing the home table", () => {
+test("detail triggers stay below interactive content instead of covering its scroll area", () => {
+  const hooks = {
+    ...React,
+    useEffect() {},
+    useId() { return "details-title"; },
+    useRef() { return { current: null }; },
+    useState(initial) { return [initial, () => {}]; },
+  };
+  const { StatisticsDialog } = loadModule("components\\statistics-dialog.tsx", { react: hooks });
+  const trigger = React.createElement("div", null, "Scrollable table");
+  const tree = StatisticsDialog({
+    title: "All authors", triggerLabel: "Show all authors", trigger,
+    overlayTrigger: true, path: "/api/statistics/authors",
+    isValid: Array.isArray, children: () => null,
+  });
+  const wrapper = tree.props.children[0];
+  assert.equal(wrapper.props.children[0], trigger);
+  assert.match(wrapper.props.className, /relative pb-7/);
+  const button = wrapper.props.children[1];
+  assert.equal(button.type, "button");
+  assert.match(button.props.className, /absolute bottom-0 right-0/);
+  assert.doesNotMatch(button.props.className, /inset-0|w-full|h-full/);
+  assert.doesNotMatch(button.props.children.props.className, /absolute/);
+  assert.match(renderToStaticMarkup(button), /View details/);
+});
+
+test("author tables expose keyboard-accessible scrolling with sticky headers only in the expanded list", () => {
   const { ReplyAuthorsTable } = loadModule("components\\reply-authors-table.tsx", {
     "@/components/profile-hover-card": { ProfileHoverCard: () => null },
   });
@@ -250,5 +276,37 @@ test("expanded author list owns scrolling and keeps every column header sticky w
   assert.equal((expanded.match(/sticky top-0 z-10 bg-background/g) ?? []).length, 3);
   assert.equal((expanded.match(/scope="col"/g) ?? []).length, 3);
   const compact = renderToStaticMarkup(React.createElement(ReplyAuthorsTable, props));
-  assert.doesNotMatch(compact, /sticky|role="region"|tabindex/);
+  assert.doesNotMatch(compact, /sticky|min-h-0 flex-1 overflow-auto/);
+  assert.match(compact, /overflow-x-auto/);
+  assert.match(compact, /role="region"/);
+  assert.match(compact, /aria-label="All reply authors to the right Jerry"/);
+  assert.match(compact, /tabindex="0"/);
+  assert.match(compact, /focus-visible:outline-foreground/);
+});
+
+test("home author handles wrap within the remaining width while detail handles stay on one line", () => {
+  const { ReplyAuthorsTable } = loadModule("components\\reply-authors-table.tsx", {
+    "@/components/profile-hover-card": {
+      ProfileHoverCard: ({ author, children }) => React.createElement("a", { href: "#" }, children ?? `@${author.handle}`),
+    },
+  });
+  const props = {
+    authors: [{
+      did: "did:plc:alice",
+      handle: `${"a".repeat(63)}.bsky.social`,
+      replyCount: 1234567,
+    }],
+    label: "Reply authors",
+  };
+  const compact = renderToStaticMarkup(React.createElement(ReplyAuthorsTable, props));
+  assert.match(compact, /class="[^"]*\btable-fixed\b/);
+  assert.match(compact, /class="[^"]*\bw-12\b[^"]*" scope="col"/);
+  assert.match(compact, /class="[^"]*\bw-20\b[^"]*" scope="col"/);
+  assert.match(compact, /class="[^"]*whitespace-normal \[overflow-wrap:anywhere\]" scope="row"/);
+  assert.match(compact, /1,234,567/);
+  assert.match(compact, /@a{63}\.<wbr\/>bsky\.<wbr\/>social/);
+
+  const expanded = renderToStaticMarkup(React.createElement(ReplyAuthorsTable, { ...props, scrollable: true }));
+  assert.doesNotMatch(expanded, /table-fixed|overflow-wrap:anywhere|<wbr/);
+  assert.match(expanded, /class="[^"]*whitespace-nowrap" scope="row"/);
 });

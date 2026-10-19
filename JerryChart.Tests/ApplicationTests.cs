@@ -199,7 +199,7 @@ public sealed partial class ApplicationTests
         await VerifyTopReplyAuthorsAsync(api, connectionString, cancellationToken);
         string rankedHtml = await web.GetStringAsync("/", cancellationToken);
         Assert.Contains("Top 10 users telling Jerry \"No\"", WebUtility.HtmlDecode(rankedHtml));
-        Assert.Contains("@renamed.example", rankedHtml);
+        Assert.Contains("@renamed.example", rankedHtml.Replace("<!-- -->", string.Empty, StringComparison.Ordinal).Replace("<wbr/>", string.Empty, StringComparison.Ordinal));
         Assert.Contains("did:plc:rank01", rankedHtml);
         Assert.Contains("Suspended", rankedHtml);
         Assert.Contains("Unresolved", rankedHtml);

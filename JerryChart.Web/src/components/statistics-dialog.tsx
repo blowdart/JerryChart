@@ -51,7 +51,7 @@ export function StatisticsDialog<T>({
   const button = (
     <button
       type="button"
-      className={`${overlayTrigger ? "absolute inset-0 z-10" : "block w-full text-left"} cursor-pointer rounded focus-visible:outline-2 focus-visible:outline-offset-4`}
+      className={`${overlayTrigger ? "absolute bottom-0 right-0 z-10" : "block w-full text-left"} cursor-pointer rounded focus-visible:outline-2 focus-visible:outline-offset-4`}
       aria-label={triggerLabel}
       title={triggerLabel}
       aria-haspopup="dialog"
@@ -61,7 +61,7 @@ export function StatisticsDialog<T>({
       }}
     >
       {overlayTrigger ? (
-        <span className="absolute bottom-0 right-0 flex items-center gap-1 text-xs underline underline-offset-4">
+        <span className="flex items-center gap-1 text-xs underline underline-offset-4">
           View details <Maximize2 aria-hidden="true" className="size-4" />
         </span>
       ) : (

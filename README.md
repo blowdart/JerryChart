@@ -68,7 +68,7 @@ container images does not revert schema changes.
 
 ### Publishing release images
 
-The **Publish release images** GitHub Actions workflow is manually dispatched
+The **Publish images and deploy** GitHub Actions workflow is manually dispatched
 from `main`. It requires completed successful push runs of CI Build, CodeQL, and
 the GitHub Actions security scan for that exact commit. It does not rerun failed
 checks. It builds without DigitalOcean credentials, then transfers the images

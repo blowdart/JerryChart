@@ -20,6 +20,7 @@ export interface ProcessingStatus {
     archiveEstimate: ArchiveReplayEstimate | null;
     archiveReplay?: ArchiveReplayStatus | null;
     archiveThroughput?: ArchiveReplayThroughput | null;
+    lastLiveEventAt?: string | null;
   };
   parentUriBackfill: {
     activity: WorkerActivity;
@@ -118,6 +119,7 @@ export function isProcessingStatus(value: unknown): value is ProcessingStatus {
     !archiveEstimate(value.monitor.archiveEstimate) ||
     !archiveReplay(value.monitor.archiveReplay) ||
     !archiveThroughput(value.monitor.archiveThroughput) ||
+    (value.monitor.lastLiveEventAt !== undefined && !nullableUtc(value.monitor.lastLiveEventAt)) ||
     !object(value.parentUriBackfill) || !activity(value.parentUriBackfill.activity)) return false;
   const queue = value.parentUriBackfill;
   const handles = value.handleRefresh;
@@ -154,13 +156,14 @@ export function replayThroughputMessage(
 
 export function activitySummary(
   activity: WorkerActivity, observedAt: string, elapsedMilliseconds: number, replay?: ArchiveReplayStatus | null,
+  lastLiveEventAt?: string | null,
 ): string {
   if (heartbeatExpired(activity, observedAt, elapsedMilliseconds)) return "Heartbeat stale; activity unknown.";
   if (replay?.stalledSince) return "Archive stalled.";
   switch (activity.state) {
     case "archive": return "Historical replay in progress.";
     case "live-connecting": return "Waiting for the first live event; connection not yet confirmed.";
-    case "live": return "Listening to live events.";
+    case "live": return liveStreamMessage(observedAt, elapsedMilliseconds, lastLiveEventAt);
     case "backfill-running": return "Parent-URI backfill in progress.";
     case "handle-refresh-idle": return "Handle updater is idle; waiting for due refreshes.";
     case "handle-refresh-running": return "Refreshing actor handles.";
@@ -185,7 +188,7 @@ export function activityOutcome(activity: WorkerActivity, observedAt: string, el
   switch (activity.state) {
     case "archive": return "In progress (historical replay).";
     case "live-connecting": return "In progress (waiting for the first live event).";
-    case "live": return "In progress (live monitoring).";
+    case "live": return "In progress (live-stream ingestion; lag evaluated separately).";
     case "backfill-running": return "In progress.";
     case "handle-refresh-idle": return "Active (idle; no due refreshes found).";
     case "handle-refresh-running": return "In progress (handle refresh).";
@@ -203,6 +206,7 @@ export function activityOutcome(activity: WorkerActivity, observedAt: string, el
 export function activityMessage(
   activity: WorkerActivity, observedAt: string, elapsedMilliseconds: number, estimate?: ArchiveReplayEstimate | null,
   replay?: ArchiveReplayStatus | null,
+  lastLiveEventAt?: string | null,
 ): string {
   const expired = heartbeatExpired(activity, observedAt, elapsedMilliseconds);
   if (replay?.stalledSince) {
@@ -228,7 +232,7 @@ export function activityMessage(
       }
       return `Historical replay in progress. Approximate time remaining: ${remainingDuration(estimate.remainingSeconds)}.`;
     }
-    case "live": return "Listening to live events. Historical replay has reached live monitoring.";
+    case "live": return liveStreamMessage(observedAt, elapsedMilliseconds, lastLiveEventAt);
     case "live-connecting": return "Waiting for the first live event; connection not yet confirmed.";
     case "backfill-running": return "Parent-URI backfill in progress.";
     case "handle-refresh-idle": return "Handle updater is idle; waiting for due refreshes.";
@@ -241,6 +245,18 @@ export function activityMessage(
     case "not-started": return "Not started / unknown: no worker run has been recorded.";
     case "stale": return "Heartbeat stale; activity unknown.";
   }
+}
+
+function liveStreamMessage(observedAt: string, elapsedMilliseconds: number, lastLiveEventAt?: string | null): string {
+  const now = Date.parse(observedAt) + Math.max(0, elapsedMilliseconds);
+  const eventTime = lastLiveEventAt ? Date.parse(lastLiveEventAt) : NaN;
+  if (!Number.isFinite(eventTime) || eventTime <= 0 || eventTime > Date.parse(observedAt)) {
+    return "Receiving live-stream events; ingestion lag unknown.";
+  }
+  const lagSeconds = (now - eventTime) / 1000;
+  return lagSeconds > 60
+    ? `Catching up via live stream; about ${remainingDuration(lagSeconds)} behind.`
+    : "Listening near real time (last saved stream event within 60 seconds).";
 }
 
 function remainingDuration(seconds: number): string {

@@ -10,6 +10,7 @@ using JerryChart.Monitor;
 
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Time.Testing;
 
 namespace JerryChart.Tests;
 
@@ -82,6 +83,64 @@ public sealed class RetryLoopTests
             return Task.CompletedTask;
         });
         AssertDelays(waits, [1, 5, 1, 5]);
+    }
+
+    /// <summary>Verifies replay without a saved checkpoint escalates backoff until persistence succeeds.</summary>
+    /// <param name="checkpointFailure">Whether failure occurs during persistence instead of processing an unsaved tail.</param>
+    /// <returns>A task representing live checkpoint retry recovery.</returns>
+    [TestMethod]
+    [DataRow(false)]
+    [DataRow(true)]
+    public async Task UnsavedLiveReplayDoesNotResetBackoff(bool checkpointFailure)
+    {
+        using var shutdown = new CancellationTokenSource();
+        var clock = new FakeTimeProvider();
+        var waits = new List<double>();
+        var logger = new RetryLogger();
+        int attempts = 0;
+        long durableSequence = 0;
+        await RetryLoop.RunAsync((processed, _) =>
+        {
+            attempts++;
+            long startingSequence = durableSequence;
+            var checkpoint = new LiveCheckpoint(clock, progress =>
+            {
+                if (checkpointFailure && attempts != 4)
+                {
+                    throw new IOException("Checkpoint write failed.");
+                }
+
+                durableSequence = progress.LiveAfterSeq!.Value;
+            });
+            int eventCount = checkpointFailure || attempts == 4 ? LiveCheckpoint.EventLimit : 10;
+            for (int index = 1; index <= eventCount; index++)
+            {
+                if (checkpoint.Processed(new MonitorProgress
+                {
+                    Service = "wss://jetstream.us-west.bsky.network",
+                    LiveAfterSeq = startingSequence + index
+                }))
+                {
+                    processed();
+                }
+            }
+
+            throw new InvalidDataException("Processing failed after the replayed batch.");
+        }, logger, shutdown.Token, (delay, _) =>
+        {
+            waits.Add(delay.TotalSeconds);
+            if (attempts == 5)
+            {
+                shutdown.Cancel();
+            }
+
+            return Task.CompletedTask;
+        });
+
+        AssertDelays(waits, [1, 5, 15, 1, 5]);
+        Assert.AreSequenceEqual(new[] { 1, 2, 3, 1, 2 }, logger.Failures);
+        Assert.AreEqual(LiveCheckpoint.EventLimit, durableSequence,
+            "Only the fourth attempt saved progress; earlier attempts replayed the same durable cursor.");
     }
 
     /// <summary>Verifies authentication refusals are logged and retried rather than terminating.</summary>

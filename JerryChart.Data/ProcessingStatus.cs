@@ -44,9 +44,11 @@ public sealed record WorkerActivity(
 /// <param name="ArchiveEstimate">Approximate snapshot time remaining, or null when no fresh estimate is available.</param>
 /// <param name="ArchiveReplay">Last recorded archive progress and generation-stall diagnostics, independent of heartbeat freshness.</param>
 /// <param name="ArchiveThroughput">Measured delivered-event window average for the current archive attempt, or null.</param>
+/// <param name="LastLiveEventAt">The stream event time of the durable live cursor for this worker run, or null when unknown.</param>
 public sealed record MonitorProcessingStatus(
     WorkerActivity Activity, DateTimeOffset? CheckpointUpdatedAt, ArchiveReplayEstimate? ArchiveEstimate = null,
-    ArchiveReplayStatus? ArchiveReplay = null, ArchiveReplayThroughput? ArchiveThroughput = null);
+    ArchiveReplayStatus? ArchiveReplay = null, ArchiveReplayThroughput? ArchiveThroughput = null,
+    DateTimeOffset? LastLiveEventAt = null);
 
 /// <summary>Reports an amortized delivery rate, not individual event processing latency.</summary>
 /// <param name="DeliveredEvents">The actual events yielded by archive enumeration, including redeliveries.</param>

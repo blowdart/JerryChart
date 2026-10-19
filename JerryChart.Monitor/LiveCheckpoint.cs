@@ -14,16 +14,18 @@ internal sealed class LiveCheckpoint(TimeProvider timeProvider, Action<MonitorPr
 
     // Call only after all effects of this event are durable. Never flush from a failure/finally path:
     // the caller may have failed partway through processing the next event.
-    internal void Processed(MonitorProgress progress)
+    internal bool Processed(MonitorProgress progress)
     {
         _pendingEvents++;
         if (_pendingEvents < EventLimit && timeProvider.GetElapsedTime(_savedAt) < Interval)
         {
-            return;
+            return false;
         }
 
         save(progress);
         _pendingEvents = 0;
         _savedAt = timeProvider.GetTimestamp();
+
+        return true;
     }
 }

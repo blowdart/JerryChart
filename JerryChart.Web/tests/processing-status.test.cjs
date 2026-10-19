@@ -56,6 +56,56 @@ const status = (phase = "not-started", parentPhase = "not-started") => ({
 const response = (body, code = 200) => new Response(JSON.stringify(body), { status: code });
 const settle = () => new Promise((resolve) => setImmediate(resolve));
 
+test("live-stream status measures saved event time, not fresh heartbeat or checkpoint time", () => {
+  const value = status("live");
+  value.monitor.checkpointUpdatedAt = observedAt;
+  const eventAt = (age) => new Date(Date.parse(observedAt) - age).toISOString();
+  const summary = (time, elapsed = 0, activity = value.monitor.activity) =>
+    activitySummary(activity, observedAt, elapsed, null, time);
+  const details = (time, elapsed = 0) =>
+    activityMessage(value.monitor.activity, observedAt, elapsed, null, null, time);
+  assert.match(summary(eventAt(59_999)), /Listening near real time/);
+  assert.match(summary(eventAt(60_000)), /Listening near real time/);
+  assert.match(summary(eventAt(60_001)), /Catching up via live stream/);
+  assert.match(details(eventAt(2 * 60 * 60 * 1000)), /Catching up via live stream; about 2 hours behind/);
+  for (const unknown of [undefined, null, "invalid", eventAt(-1), "0001-01-01T00:00:00Z"]) {
+    assert.match(summary(unknown), /ingestion lag unknown/);
+    assert.match(details(unknown), /ingestion lag unknown/);
+  }
+  assert.match(summary(eventAt(-1), 1_000), /ingestion lag unknown/,
+    "A future observation must not become trustworthy just because a cached response ages.");
+  assert.match(summary(eventAt(59_999), 2), /Catching up via live stream/);
+  assert.match(summary(eventAt(0), 60_000), /Heartbeat stale/);
+  assert.doesNotMatch(summary(eventAt(0), 0, worker("retrying")), /near real time/);
+  assert.doesNotMatch(summary(eventAt(0), 0, worker("stopped")), /near real time/);
+  assert.ok(isProcessingStatus(value), "Missing event-time field is compatible with old APIs.");
+  assert.ok(isProcessingStatus({ ...value, monitor: { ...value.monitor, lastLiveEventAt: eventAt(7_200_000) } }));
+  for (const invalid of ["invalid", 123, {}]) {
+    assert.equal(isProcessingStatus({ ...value, monitor: { ...value.monitor, lastLiveEventAt: invalid } }), false);
+  }
+});
+
+test("summary and details expose backlog and age it locally during failed polling", async (context) => {
+  context.mock.method(console, "error", () => {});
+  context.mock.method(global, "fetch", async () => response({}, 503));
+  const component = harness(context);
+  const value = status("live");
+  value.monitor.checkpointUpdatedAt = observedAt;
+  value.monitor.lastLiveEventAt = new Date(Date.parse(observedAt) - 59_000).toISOString();
+  component.render({ status: value, error: null });
+  component.commit();
+  assert.match(component.render(), /Listening near real time/);
+  component.tick();
+  await settle();
+  const html = component.render();
+  const [summary, details] = html.split("<dialog");
+  assert.match(summary, /Catching up via live stream/);
+  assert.match(details, /Catching up via live stream/);
+  assert.match(details, /Last saved live-stream event time/);
+  assert.match(details, /Unable to refresh processing status/);
+  component.unmount();
+});
+
 const throughput = () => ({
   deliveredEvents: 240, windowSeconds: 120, windowStartedAt: "2026-10-05T11:58:00Z",
   measuredAt: observedAt, eventsPerSecond: 2, microsecondsPerEvent: 500_000,
@@ -179,7 +229,7 @@ test("status validation accepts empty not-started, stale and terminal snapshots 
 test("activity messages distinguish replay, live, retries, stale, stopped, failure and unknown without invented progress", () => {
   assert.match(activityMessage(worker("archive"), observedAt, 59_999), /Historical replay in progress/);
   assert.match(activityMessage(worker("live-connecting"), observedAt, 0), /Waiting for the first live event; connection not yet confirmed/);
-  assert.match(activityMessage(worker("live"), observedAt, 0), /Listening to live/);
+  assert.match(activityMessage(worker("live"), observedAt, 0), /ingestion lag unknown/);
   assert.match(activityMessage(worker("backfill-running"), observedAt, 0), /backfill in progress/);
   assert.match(activityMessage(worker("retrying"), observedAt, 0), /Retrying/);
   for (const phase of ["archive", "live-connecting", "live", "backfill-running", "retrying"]) {
@@ -195,7 +245,7 @@ test("activity summaries stay concise while distinguishing stale, stalled and wo
   assert.equal(activitySummary(worker("archive"), observedAt, 0), "Historical replay in progress.");
   assert.equal(activitySummary(worker("live-connecting"), observedAt, 0),
     "Waiting for the first live event; connection not yet confirmed.");
-  assert.equal(activitySummary(worker("live"), observedAt, 0), "Listening to live events.");
+  assert.equal(activitySummary(worker("live"), observedAt, 0), "Receiving live-stream events; ingestion lag unknown.");
   assert.equal(activitySummary(worker("retrying"), observedAt, 0), "Retrying after a temporary failure or waiting for scheduled retries.");
   assert.equal(activitySummary(worker("archive"), observedAt, 60_000), "Heartbeat stale; activity unknown.");
   assert.equal(activitySummary(worker("archive"), observedAt, 0, {
@@ -622,7 +672,7 @@ test("client polls status only, serializes visible resumes, cancels hidden/unmou
   requests[1].resolve(response(status("live", "completed")));
   await settle();
   const html = component.render();
-  assert.match(html, /Listening to live events/);
+  assert.match(html, /Receiving live-stream events; ingestion lag unknown/);
   assert.doesNotMatch(html, /Parent URIs:/);
   assert.doesNotMatch(html, /run failed/);
   component.tick();
@@ -763,7 +813,7 @@ test("initial errors remain explicit and a hidden page waits until visible to re
   component.visible(true);
   await settle();
   assert.equal(calls, 1);
-  assert.match(component.render(), /Listening to live events/);
+  assert.match(component.render(), /Receiving live-stream events; ingestion lag unknown/);
   assert.doesNotMatch(component.render(), /role="alert"/);
   component.unmount();
 });

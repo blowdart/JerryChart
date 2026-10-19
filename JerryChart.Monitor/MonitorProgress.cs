@@ -19,6 +19,8 @@ internal sealed record MonitorProgress
     public SnapshotCheckpoint? ArchiveCheckpoint { get; init; }
     /// <summary>Gets the last processed live sequence, or null when not consuming live events.</summary>
     public long? LiveAfterSeq { get; init; }
+    /// <summary>Gets the stream event time associated with the saved live sequence, not the post creation time.</summary>
+    public DateTimeOffset? LastLiveEventAt { get; init; }
     /// <summary>Gets the highest processed archive sequence saved with a checkpoint, excluding redelivery from rate estimates.</summary>
     public long? ArchiveHighWaterSeq { get; init; }
     /// <summary>Gets the approximate remaining snapshot duration measured at the last checkpoint, or null during warm-up.</summary>
@@ -35,7 +37,8 @@ internal sealed record MonitorProgress
             ArchiveHighWaterSeq = null,
             ArchiveEstimate = null,
             ArchiveThroughput = null,
-            LiveAfterSeq = null
+            LiveAfterSeq = null,
+            LastLiveEventAt = null
         };
     }
 }

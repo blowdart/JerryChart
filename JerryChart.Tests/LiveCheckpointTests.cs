@@ -24,6 +24,9 @@ public sealed class LiveCheckpointTests
         }
 
         Assert.AreSequenceEqual(new long?[] { 1_000, 2_000 }, saved.Select(item => item.LiveAfterSeq).ToArray());
+        Assert.AreSequenceEqual(saved.Select(item => DateTimeOffset.UnixEpoch.AddSeconds(item.LiveAfterSeq!.Value)).ToArray(),
+            saved.Select(item => item.LastLiveEventAt!.Value).ToArray(),
+            "Each durable cursor must carry the corresponding event time, not the checkpoint clock.");
         var restarted = new LiveCheckpoint(clock, saved.Add);
         for (long sequence = saved[^1].LiveAfterSeq!.Value + 1; sequence <= 3_000; sequence++)
         {
@@ -42,15 +45,15 @@ public sealed class LiveCheckpointTests
         var saved = new List<MonitorProgress>();
         var checkpoint = new LiveCheckpoint(clock, saved.Add);
         clock.Advance(LiveCheckpoint.Interval - TimeSpan.FromTicks(1));
-        checkpoint.Processed(Progress(1));
+        Assert.IsFalse(checkpoint.Processed(Progress(1)));
         Assert.IsEmpty(saved);
         clock.Advance(TimeSpan.FromTicks(1));
-        checkpoint.Processed(Progress(2));
+        Assert.IsTrue(checkpoint.Processed(Progress(2)));
         Assert.AreEqual(2L, saved.Single().LiveAfterSeq);
-        checkpoint.Processed(Progress(3));
+        Assert.IsFalse(checkpoint.Processed(Progress(3)));
         Assert.HasCount(1, saved);
         clock.Advance(LiveCheckpoint.Interval);
-        checkpoint.Processed(Progress(4));
+        Assert.IsTrue(checkpoint.Processed(Progress(4)));
         Assert.AreEqual(4L, saved[^1].LiveAfterSeq);
     }
 
@@ -78,13 +81,14 @@ public sealed class LiveCheckpointTests
         Assert.Throws<IOException>(() => checkpoint.Processed(Progress(LiveCheckpoint.EventLimit)));
         Assert.IsNull(saved);
         fail = false;
-        checkpoint.Processed(Progress(LiveCheckpoint.EventLimit + 1));
+        Assert.IsTrue(checkpoint.Processed(Progress(LiveCheckpoint.EventLimit + 1)));
         Assert.AreEqual(LiveCheckpoint.EventLimit + 1L, saved?.LiveAfterSeq);
     }
 
     private static MonitorProgress Progress(long sequence) => new()
     {
         Service = "wss://jetstream.us-west.bsky.network",
-        LiveAfterSeq = sequence
+        LiveAfterSeq = sequence,
+        LastLiveEventAt = DateTimeOffset.UnixEpoch.AddSeconds(sequence)
     };
 }

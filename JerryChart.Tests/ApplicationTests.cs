@@ -270,6 +270,33 @@ public sealed partial class ApplicationTests
             Assert.IsNull(live.Monitor.ArchiveEstimate);
             Assert.AreEqual(clock.GetUtcNow(), live.Monitor.Activity.HeartbeatAt);
             Assert.AreEqual(TimeSpan.Zero, live.Monitor.Activity.HeartbeatAt!.Value.Offset);
+            Assert.IsNull(live.Monitor.LastLiveEventAt, "Legacy checkpoints must not imply near-real-time ingestion.");
+            MonitorProgress liveTimestampProgress = estimatedProgress with
+            {
+                LiveAfterSeq = 1_000,
+                LastLiveEventAt = clock.GetUtcNow().AddHours(-2)
+            };
+            store.SaveProgress(liveTimestampProgress);
+            Assert.AreEqual(liveTimestampProgress.LastLiveEventAt,
+                (await statusStore.GetAsync(cancellationToken)).Monitor.LastLiveEventAt,
+                "Fresh checkpoint writes and heartbeats must preserve the old stream timestamp.");
+            Assert.AreEqual(liveTimestampProgress, await store.LoadProgressAsync(cancellationToken));
+            Assert.IsNull(liveTimestampProgress.ReturnToArchive().LastLiveEventAt);
+            await using (MySqlCommand timestampCommand = owner.CreateCommand())
+            {
+                timestampCommand.CommandText = "UPDATE JetstreamReplayProgress SET UpdatedAt = @beforeRun";
+                timestampCommand.Parameters.AddWithValue("@beforeRun", live.Monitor.Activity.StartedAt!.Value.AddSeconds(-1).UtcDateTime);
+                await timestampCommand.ExecuteNonQueryAsync(cancellationToken);
+                Assert.IsNull((await statusStore.GetAsync(cancellationToken)).Monitor.LastLiveEventAt,
+                    "A previous run's checkpoint must not imply the restarted worker has caught up.");
+            }
+            store.SaveProgress(liveTimestampProgress with { LastLiveEventAt = clock.GetUtcNow().AddMinutes(1) });
+            Assert.IsNull((await statusStore.GetAsync(cancellationToken)).Monitor.LastLiveEventAt,
+                "Future stream times must not imply that the worker is caught up.");
+            store.SaveProgress(liveTimestampProgress with { LastLiveEventAt = DateTimeOffset.MinValue });
+            Assert.IsNull((await statusStore.GetAsync(cancellationToken)).Monitor.LastLiveEventAt,
+                "Out-of-range timestamps clamped by the SDK must not imply a measurable backlog.");
+            store.SaveProgress(estimatedProgress);
 
             await using var competitor = new MySqlConnection(options.ConnectionString);
             await competitor.OpenAsync(cancellationToken);

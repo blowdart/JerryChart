@@ -154,7 +154,8 @@ export function ProcessingStatus({ initial }: { initial: InitialStatus }) {
           <span className="block font-medium text-foreground">Processing status</span>
           {snapshot
             ? <span className="block"><strong>Jetstream:</strong>{" "}
-              {activitySummary(snapshot.monitor.activity, snapshot.observedAt, elapsed, snapshot.monitor.archiveReplay)}
+              {activitySummary(snapshot.monitor.activity, snapshot.observedAt, elapsed,
+                snapshot.monitor.archiveReplay, snapshot.monitor.lastLiveEventAt)}
             </span>
             : !error && <span className="block">Worker activity is unknown.</span>}
           <span className="flex items-center justify-end gap-1 text-xs underline underline-offset-4">
@@ -187,8 +188,12 @@ export function ProcessingStatus({ initial }: { initial: InitialStatus }) {
               <h3 className="pt-2 font-medium text-foreground">Jetstream processing</h3>
               <p>
                 {activityMessage(snapshot.monitor.activity, snapshot.observedAt, elapsed,
-                  snapshot.monitor.archiveEstimate, snapshot.monitor.archiveReplay)}
+                  snapshot.monitor.archiveEstimate, snapshot.monitor.archiveReplay, snapshot.monitor.lastLiveEventAt)}
               </p>
+              {snapshot.monitor.lastLiveEventAt && <p>
+                Last saved live-stream event time: <LocalizedTime timestamp={snapshot.monitor.lastLiveEventAt} />.
+                {" "}This measures stream ingestion, not the post creation time or heartbeat.
+              </p>}
               {throughput && <p title="Average since this replay attempt began, including download, decompression, parsing, processing, checkpoint and active waits; not individual event latency.">{throughput}</p>}
               {snapshot.monitor.archiveReplay && <>
                 <p>Last successful processing / durable progress:{" "}

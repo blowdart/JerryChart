@@ -31,7 +31,8 @@ public sealed class ProcessingStatusStore(MySqlDataSource dataSource, TimeProvid
                 JSON_UNQUOTE(JSON_EXTRACT(CheckpointJson, '$.ArchiveThroughput.WindowStartedAt')),
                 JSON_UNQUOTE(JSON_EXTRACT(CheckpointJson, '$.ArchiveThroughput.MeasuredAt')),
                 CAST(JSON_UNQUOTE(JSON_EXTRACT(CheckpointJson, '$.ArchiveThroughput.DeliveredEvents')) AS SIGNED),
-                CAST(JSON_UNQUOTE(JSON_EXTRACT(CheckpointJson, '$.ArchiveThroughput.WindowSeconds')) AS DOUBLE)
+                CAST(JSON_UNQUOTE(JSON_EXTRACT(CheckpointJson, '$.ArchiveThroughput.WindowSeconds')) AS DOUBLE),
+                NULLIF(JSON_UNQUOTE(JSON_EXTRACT(CheckpointJson, '$.LastLiveEventAt')), 'null')
             FROM JetstreamReplayProgress WHERE MonitorId = 'jerry-no-v1';
             SELECT NoProgressSince, LastProgressAt, StalledSince, ConsecutiveGenerationMismatches, NextRetryAt
             FROM ArchiveReplayActivity WHERE Resource = 'monitor';
@@ -69,9 +70,14 @@ public sealed class ProcessingStatusStore(MySqlDataSource dataSource, TimeProvid
         DateTimeOffset? checkpoint = null;
         ArchiveReplayEstimate? estimate = null;
         ArchiveReplayThroughput? throughput = null;
+        DateTimeOffset? lastLiveEventAt = null;
         if (await reader.ReadAsync(cancellationToken))
         {
             checkpoint = Utc(reader, 0);
+            if (!reader.IsDBNull(7))
+            {
+                lastLiveEventAt = DateTimeOffset.Parse(reader.GetString(7), CultureInfo.InvariantCulture).ToUniversalTime();
+            }
             if (!reader.IsDBNull(1) && !reader.IsDBNull(2))
             {
                 estimate = new(reader.GetDouble(2),
@@ -97,7 +103,9 @@ public sealed class ProcessingStatusStore(MySqlDataSource dataSource, TimeProvid
         WorkerActivity evaluatedMonitor = monitor.Evaluate(now);
         return new(now, new(evaluatedMonitor, checkpoint,
             archiveReplay?.StalledSince is null ? estimate?.Evaluate(evaluatedMonitor, now) : null, archiveReplay,
-            archiveReplay?.StalledSince is null ? throughput?.Evaluate(evaluatedMonitor, now) : null),
+            archiveReplay?.StalledSince is null ? throughput?.Evaluate(evaluatedMonitor, now) : null,
+            evaluatedMonitor.Phase == "live" && checkpoint >= evaluatedMonitor.StartedAt &&
+                lastLiveEventAt > DateTimeOffset.UnixEpoch && lastLiveEventAt <= now ? lastLiveEventAt : null),
             parentQueue with { Activity = parent.Evaluate(now) },
             new(handles.Evaluate(now), reader.GetInt64(0), reader.GetInt64(1), Utc(reader, 2)));
     }

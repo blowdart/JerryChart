@@ -423,6 +423,16 @@ has delivered data, not merely that connection was attempted. An expired live
 cursor returns to the archive after the last durably processed sequence, rather
 than jumping to the live tip.
 
+Live progress is checkpointed after 1,000 newly processed events or five seconds,
+whichever comes first, checked when an event finishes processing. Matching reply
+transactions and actor invalidations complete before their sequence can be saved.
+Idle streams do not trigger a timer-driven checkpoint. Shutdown, interruption,
+or processing/persistence failure leaves the unsaved tail for replay from the
+last durable cursor; hits remain deduplicated and redelivery does not advance the
+last-new-hit timestamp. Archive checkpoint behavior is unchanged. A recent
+checkpoint timestamp proves persistence activity, not that ingestion is caught
+up to wall-clock time; `live` can include retained-event catch-up.
+
 Live stream completion or transport interruption logs a warning identifying
 JerryChart as the owner of reconnection from durable progress; SDK-managed live
 reconnects are deliberately disabled. The underlying exception and stack trace

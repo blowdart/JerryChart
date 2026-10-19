@@ -59,7 +59,7 @@ def updated_spec(spec, tag):
             component = matches[0]
             image = component.get("image", {})
             if (image.get("registry_type") != "DOCR" or
-                    image.get("registry") != "idunno-registry" or
+                    image.get("registry", "") not in ("", "idunno-registry") or
                     image.get("repository") != name or
                     any(source in component for source in ("github", "gitlab", "git", "bitbucket"))):
                 raise DeploymentError(f"Unexpected image source for {name}; refusing to replace it.")
@@ -94,7 +94,21 @@ def deploy(app_id, tag, request, sleep=time.sleep, clock=time.monotonic):
     if latest != app:
         raise DeploymentError("The app changed while preparing deployment; refusing a stale update.")
     response = request("PUT", path, {"spec": spec})["app"]
-    deployment_id = str(uuid.UUID(response["pending_deployment"]["id"]))
+    deployment = response.get("pending_deployment")
+    if not deployment:
+        deployment = response.get("in_progress_deployment")
+        if not deployment or deployment.get("spec") != spec:
+            raise DeploymentError(
+                "App update was accepted but no associated deployment could be identified. "
+                "Inspect App Platform Activity before retrying; no second update was submitted."
+            )
+    try:
+        deployment_id = str(uuid.UUID(deployment["id"]))
+    except (KeyError, ValueError, TypeError, AttributeError):
+        raise DeploymentError(
+            "App update was accepted but its deployment ID was missing or invalid. "
+            "Inspect App Platform Activity before retrying; no second update was submitted."
+        ) from None
     print(f"App {app_id}, deployment {deployment_id}.")
     deadline = clock() + 30 * 60
     while clock() < deadline:

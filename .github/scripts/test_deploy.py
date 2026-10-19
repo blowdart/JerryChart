@@ -60,6 +60,26 @@ class DeploymentTests(unittest.TestCase):
         spec["services"][0]["image"]["digest"] = "sha256:old"
         self.assertNotIn("digest", deploy.updated_spec(spec, "new")["services"][0]["image"])
 
+    def test_documented_docr_registry_forms_preserve_all_other_settings(self):
+        for registry in ("", None, "idunno-registry"):
+            with self.subTest(registry=registry):
+                spec = fixture()["spec"]
+                for kind, names in deploy.TARGETS.items():
+                    for component in spec[kind]:
+                        if component["name"] in names:
+                            if registry is None:
+                                component["image"].pop("registry")
+                            else:
+                                component["image"]["registry"] = registry
+                expected = copy.deepcopy(spec)
+                for kind, names in deploy.TARGETS.items():
+                    for component in expected[kind]:
+                        if component["name"] in names:
+                            component["image"]["tag"] = "new"
+                original = copy.deepcopy(spec)
+                self.assertEqual(expected, deploy.updated_spec(spec, "new"))
+                self.assertEqual(original, spec)
+
     def test_unexpected_sources_and_components_fail_closed(self):
         for mutation in ("app", "missing", "duplicate", "registry", "repository", "type", "git"):
             with self.subTest(mutation=mutation):
@@ -116,6 +136,42 @@ class DeploymentTests(unittest.TestCase):
     def test_concurrent_spec_change_is_not_overwritten(self):
         with self.assertRaisesRegex(deploy.DeploymentError, "stale update"):
             self.run_deploy(iter([]), changed=True)
+
+    def test_update_response_deployment_selection_and_safe_failure(self):
+        spec = deploy.updated_spec(fixture()["spec"], "new")
+        associated = {"id": DEPLOYMENT_ID, "spec": spec}
+        cases = [
+            ({"pending_deployment": associated}, True),
+            ({"in_progress_deployment": associated}, True),
+            ({"pending_deployment": None, "in_progress_deployment": associated}, True),
+            ({"pending_deployment": associated, "in_progress_deployment": {"id": "unrelated"}}, True),
+            ({}, False),
+            ({"pending_deployment": None, "in_progress_deployment": None}, False),
+            ({"in_progress_deployment": {"id": DEPLOYMENT_ID}}, False),
+            ({"in_progress_deployment": {"id": DEPLOYMENT_ID, "spec": fixture()["spec"]}}, False),
+            ({"pending_deployment": {"id": "invalid"}}, False),
+            ({"pending_deployment": {"spec": spec}}, False),
+        ]
+        for response, success in cases:
+            with self.subTest(response=response), patch("sys.stdout", io.StringIO()):
+                calls = []
+
+                def request(method, path, body=None):
+                    calls.append((method, path))
+                    if method == "PUT":
+                        return {"app": response}
+                    if "/deployments/" in path:
+                        return {"deployment": {"phase": "ACTIVE", "spec": spec}}
+                    return {"app": fixture()}
+
+                if success:
+                    self.assertEqual(deploy.deploy(APP_ID, "new", request), DEPLOYMENT_ID)
+                    self.assertEqual(calls[-1][1], f"/apps/{APP_ID}/deployments/{DEPLOYMENT_ID}")
+                else:
+                    with self.assertRaisesRegex(deploy.DeploymentError, "Inspect App Platform Activity before retrying"):
+                        deploy.deploy(APP_ID, "new", request)
+                    self.assertFalse(any("/deployments/" in path for _, path in calls))
+                self.assertEqual(sum(method == "PUT" for method, _ in calls), 1)
 
     def test_running_or_pinned_deployment_is_not_overwritten(self):
         for key in ("pending_deployment", "in_progress_deployment", "pinned_deployment"):

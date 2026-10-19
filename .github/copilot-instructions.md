@@ -75,6 +75,16 @@ the blocker rather than claiming the gate passed.
 * **Outbound monitor traffic** uses SSRF-protected HTTP handlers, including the Jetstream WebSocket invoker. Preserve redirect restrictions and unsafe-address blocking.
 * **Backfill scheduling** uses a hosted background service plus database locking. Do not introduce immediate startup backfills or replay missed slots without an explicit behavior change.
 
+## DigitalOcean deployments
+
+Before planning or changing DigitalOcean deployments, advising on token scopes,
+or recovering a failed release, read
+[digitalocean-deployment.instructions.md](instructions/digitalocean-deployment.instructions.md).
+These rules apply to deployment discussions as well as code changes. Full-spec
+updates can disconnect production networking when token permissions hide VPC
+configuration; never submit an incomplete spec or automatically retry an
+uncertain write.
+
 ## Key conventions
 
 * **Documentation.** Update directly related README guidance when behavior or configuration changes. There is no package-grouped changelog or PublicAPI ledger to maintain.

@@ -133,6 +133,10 @@ proof of visibility. The guard must pass with the actual release token.
 The update response and every monitored deployment spec must also retain the
 required VPC. A mismatch after acceptance fails with explicit incident guidance;
 it cannot undo an already accepted update and does not attempt another write.
+An exception during the update call, including a truncated response or connection
+reset, reports an uncertain outcome: the provider may already have accepted the
+update. Inspect App Platform Networking and Activity before retrying; the script
+does not automatically retry the write or submit a rollback.
 Do not rerun an older workflow attempt to pick up this fix: retries use that
 run's original workflow and source commit.
 

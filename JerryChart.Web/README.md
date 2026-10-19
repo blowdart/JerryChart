@@ -41,7 +41,7 @@ URL defaults. Localhost links cannot be fetched by external preview services.
 
 ## Visual Studio
 
-`JerryChart.Web.esproj` represents the frontend in `JerryChart.sln`, automatically
+`JerryChart.Web.esproj` represents the frontend in `JerryChart.slnx`, automatically
 showing its source, tests, configuration, and assets. Install Visual Studio's
 JavaScript/TypeScript project-system support to open it. Generated output and
 dependency directories are excluded from the project view.

@@ -204,7 +204,7 @@ The last command is optional if you will use only `dotnet run`.
 ## First-time setup
 
 Clone this repository and open a terminal in the directory containing
-`JerryChart.sln`. The following examples use PowerShell; the `dotnet` and
+`JerryChart.slnx`. The following examples use PowerShell; the `dotnet` and
 `aspire` commands also work in other shells.
 
 ### Get and configure a Jetstream key
@@ -1312,7 +1312,7 @@ runner, and `JerryChart.Tests` uses `MSTest.Sdk` with its native MTP runner.
 There is no VSTest or `Microsoft.NET.Test.Sdk` configuration.
 
 ```powershell
-dotnet test --solution JerryChart.sln --report-trx
+dotnet test --solution JerryChart.slnx --report-trx
 ```
 
 Integration tests require Docker and Node.js. They start the Aspire application
@@ -1323,7 +1323,7 @@ schema cleanup, statistics API contracts, and frontend report rendering.
 Resources are disposed at test completion. To run only the unit tests without Docker:
 
 ```powershell
-dotnet test --solution JerryChart.sln --filter "TestCategory!=Integration"
+dotnet test --solution JerryChart.slnx --filter "TestCategory!=Integration"
 ```
 
 The full frontend integration test runs `npm ci`; stop any frontend dev server

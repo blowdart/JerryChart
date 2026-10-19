@@ -69,13 +69,13 @@ jobs:
         run: docker info
 
       - name: Restore
-        run: dotnet restore JerryChart.sln
+        run: dotnet restore JerryChart.slnx
 
       - name: Build
-        run: dotnet build JerryChart.sln --configuration Release --no-restore -warnaserror
+        run: dotnet build JerryChart.slnx --configuration Release --no-restore -warnaserror
 
       - name: Run Microsoft.Testing.Platform tests
-        run: dotnet test --solution JerryChart.sln --configuration Release --no-build --report-trx
+        run: dotnet test --solution JerryChart.slnx --configuration Release --no-build --report-trx
 
       - name: Preserve test results and diagnostics
         if: always()

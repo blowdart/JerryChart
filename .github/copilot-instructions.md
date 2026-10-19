@@ -7,9 +7,9 @@ frontend using shadcn/ui.
 
 ## Build, test, and lint
 
-* Use the stable .NET 10 SDK selected by `global.json`. The solution is `JerryChart.sln`.
-* Build with analyzers and warnings as errors: `dotnet build JerryChart.sln -c Release -warnaserror`.
-* Run all .NET tests: `dotnet test --solution JerryChart.sln -c Release --report-trx`.
+* Use the stable .NET 10 SDK selected by `global.json`. The solution is `JerryChart.slnx`.
+* Build with analyzers and warnings as errors: `dotnet build JerryChart.slnx -c Release -warnaserror`.
+* Run all .NET tests: `dotnet test --solution JerryChart.slnx -c Release --report-trx`.
 * Run one test project: `dotnet test --project JerryChart.Tests\JerryChart.Tests.csproj -c Release --report-trx`.
 * Run one test or class by adding `--filter "FullyQualifiedName~MonitorMetricsTests"`.
 * For unit-only iteration, add `--filter "TestCategory!=Integration"`.
@@ -50,8 +50,8 @@ findings that remain unaddressed, not just new comments.
 
 Before every commit, run these from the repository root and require both to pass:
 
-1. `dotnet build JerryChart.sln -c Release --no-incremental -warnaserror` — zero warnings and errors.
-2. `dotnet test --solution JerryChart.sln -c Release --no-build --report-trx` — all tests, including integration tests.
+1. `dotnet build JerryChart.slnx -c Release --no-incremental -warnaserror` — zero warnings and errors.
+2. `dotnet test --solution JerryChart.slnx -c Release --no-build --report-trx` — all tests, including integration tests.
 
 For frontend changes, also run the frontend lint, type-check, Node tests, and
 production build used by CI. Use the existing test reporters for readable output

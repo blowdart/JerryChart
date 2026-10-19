@@ -119,7 +119,9 @@ jobs:
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: release-image-references
-          path: release-images.md
+          path: |
+            release-images.md
+            release-tag.txt
           if-no-files-found: error
           retention-days: 90
 
@@ -128,3 +130,30 @@ jobs:
         run: |
           docker logout "$REGISTRY"
           doctl auth remove --context default
+
+  deploy:
+    name: Deploy published images to production
+    needs: publish
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    environment: production
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - name: Check out deployment script
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Download published release tag
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        with:
+          name: release-image-references
+
+      - name: Update image sources and wait for deployment
+        env:
+          DIGITALOCEAN_ACCESS_TOKEN: ${{ secrets.DIGITALOCEAN_ACCESS_TOKEN }}
+          DIGITALOCEAN_APP_ID: ${{ vars.DIGITALOCEAN_APP_ID }}
+        run: python3 .github/scripts/deploy.py

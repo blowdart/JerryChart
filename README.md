@@ -85,12 +85,52 @@ administration access. Registry credentials expire after 15 minutes.
 The registry plan must allow four repositories in total: the existing `maddybot`
 repository plus the three JerryChart repositories. Images are tagged with the
 source commit, workflow run ID, and attempt number; there is no floating `latest`
-tag or automatic deployment. The build-time tag is retained with the image
+tag. The build-time tag is retained with the image
 artifact so publish-only retries reuse the original images and tags.
 The publish job records the three immutable image
 references in its summary and in the `release-image-references` artifact. A
 failed push can leave a partial set in the registry: only use a release after the
 entire workflow succeeds and all three references have been recorded.
+
+### Deploying published images
+
+After publication, the same workflow waits at the **`production`** GitHub
+environment before updating App Platform. Create this environment before running
+the workflow, restrict its branches to `main`, and configure required reviewers
+to require production approval (subject to GitHub plan support). Add:
+
+- Environment variable **`DIGITALOCEAN_APP_ID`**: `01d3cf77-d726-443d-813f-2b08e26db2ef`.
+- Environment secret **`DIGITALOCEAN_ACCESS_TOKEN`**: a separate deployment token
+  with `app:update` and its required scopes `app:read`, `regions:read`,
+  `sizes:read`, and `actions:read`. It does not need registry push, app
+  create/delete, database write, or database credential access. DigitalOcean
+  scopes are team-wide, not restricted to this app; the script also validates
+  the app and component identities. Keep the `release` token registry-only.
+
+The deploy job downloads the published tag rather than recomputing it, including
+on deploy-only retries. It reads the existing app spec and changes only the image
+tag (replacing an image digest if present) for services `jerrychart-api` and
+`jerrychart-web` and worker `jerrychart-monitor`. Networking, health checks,
+instance counts, startup commands, database bindings, and encrypted environment
+values are preserved. The full spec remains in memory: it is never logged or
+uploaded as an artifact. Unexpected component names or registry sources fail
+before updating the app.
+
+Do not edit the app configuration or start a manual deployment while this job
+runs. Workflow releases are serialized; a pending/running or pinned deployment
+and configuration changes detected before submission stop the job. DigitalOcean
+does not provide an atomic conditional spec update, so this cannot lock out
+simultaneous control-panel edits.
+
+The job waits up to 30 minutes for the exact deployment returned by the update
+to become `ACTIVE`, verifies its spec, and records its ID and image tag in the
+workflow summary. Failure, cancellation, supersession, or timeout fails the job;
+inspect that deployment's **Activity** details in App Platform before retrying.
+API errors do not dump response bodies or secrets. There is no automatic rollback
+or database/checkpoint reset. An already active identical release is a no-op.
+Canceling the GitHub job does not cancel a deployment already submitted to
+DigitalOcean. If an API write times out, inspect App Platform before retrying:
+the update may have been accepted even though its response was lost.
 
 ## Minimum requirements
 

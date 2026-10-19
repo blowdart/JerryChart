@@ -15,6 +15,19 @@ env:
   NEXT_TELEMETRY_DISABLED: "1"
 
 jobs:
+  deployment-tests:
+    name: Deployment automation tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Test deployment automation without credentials or network
+        run: python3 -m unittest discover -s .github/scripts -p 'test_*.py' -v
+
   event:
     name: Preserve CI event for test reporting
     runs-on: ubuntu-latest

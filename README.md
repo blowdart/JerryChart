@@ -423,13 +423,33 @@ has delivered data, not merely that connection was attempted. An expired live
 cursor returns to the archive after the last durably processed sequence, rather
 than jumping to the live tip.
 
+Live progress is checkpointed after 1,000 newly processed events or five seconds,
+whichever comes first, checked when an event finishes processing. Matching reply
+transactions and actor invalidations complete before their sequence can be saved.
+Idle streams do not trigger a timer-driven checkpoint. Shutdown, interruption,
+or processing/persistence failure leaves the unsaved tail for replay from the
+last durable cursor; hits remain deduplicated and redelivery does not advance the
+last-new-hit timestamp. Archive checkpoint behavior is unchanged. A recent
+checkpoint timestamp proves persistence activity, not that ingestion is caught
+up to wall-clock time; `live` can include retained-event catch-up.
+The processing summary and details distinguish catch-up from near-real-time
+ingestion using the stream timestamp saved alongside the live cursor, not a
+post's creation time. More than 60 seconds of event-time lag is labelled
+"Catching up via live stream"; at most 60 seconds is labelled "Listening near
+real time". Missing legacy timestamps or future timestamps leave lag unknown.
+The browser ages this observation between polls and still gives stale
+heartbeats precedence. No database schema migration is needed; older checkpoints
+remain readable and acquire the optional timestamp at the next live checkpoint.
+Live retry backoff resets only after a checkpoint is successfully persisted,
+not when replayed events are processed within an unsaved batch.
+
 Live stream completion or transport interruption logs a warning identifying
 JerryChart as the owner of reconnection from durable progress; SDK-managed live
 reconnects are deliberately disabled. The underlying exception and stack trace
 are retained at Debug level. Processing failures, malformed events, and server
 refusals retain Error-level diagnostics. Retry logs include the consecutive
-monitor failure count, which continues past the backoff cap and resets when an
-event is durably processed. The Information-level message
+monitor failure count, which continues past the backoff cap and resets on
+successful live checkpoint persistence or archive event processing. The Information-level message
 `Live Jetstream resumed; receiving events.` is emitted once per connection on
 its first sequenced event, not when the connection attempt starts.
 

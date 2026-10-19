@@ -172,6 +172,7 @@ internal static class JetstreamMonitor
         {
             jetstream.KindFilter = [JetStreamEventKind.Commit, JetStreamEventKind.Identity, JetStreamEventKind.Account];
             bool receivedLiveEvent = false;
+            var checkpoint = new LiveCheckpoint(TimeProvider.System, store.SaveProgress);
             await using IAsyncEnumerator<JetstreamEvent> events = jetstream.StreamAsync(
                 progress.LiveAfterSeq, maximumReconnectAttempts: 0, cancellationToken).GetAsyncEnumerator(cancellationToken);
             while (await ReadNextLiveAsync(events))
@@ -196,15 +197,22 @@ internal static class JetstreamMonitor
 
                 long started = Stopwatch.GetTimestamp();
                 await ProcessAsync(item, store, logger, cancellationToken);
-                MonitorProgress next = progress with { LiveAfterSeq = sequence };
-                store.SaveProgress(next);
+                MonitorProgress next = progress with
+                {
+                    LiveAfterSeq = sequence,
+                    LastLiveEventAt = item.DateTimeOffset
+                };
+                bool checkpointSaved = checkpoint.Processed(next);
                 progress = next;
                 MonitorMetrics.EventProcessed(EventSource.Live, item.Kind, started);
                 if (archiveStall.Progress())
                 {
                     await activity.ReportArchiveAsync(cancellationToken);
                 }
-                processedEvent();
+                if (checkpointSaved)
+                {
+                    processedEvent();
+                }
             }
         }
         catch (JetstreamConnectionException exception) when (exception.ErrorDetail?.Error == "CursorTooOld")

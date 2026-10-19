@@ -1,6 +1,7 @@
 // Copyright (c) Barry Dorrans. All rights reserved.
 // Licensed under the MIT License.
 
+using System.Diagnostics;
 using System.Globalization;
 using System.Net;
 using System.Net.Http.Json;
@@ -269,6 +270,33 @@ public sealed partial class ApplicationTests
             Assert.IsNull(live.Monitor.ArchiveEstimate);
             Assert.AreEqual(clock.GetUtcNow(), live.Monitor.Activity.HeartbeatAt);
             Assert.AreEqual(TimeSpan.Zero, live.Monitor.Activity.HeartbeatAt!.Value.Offset);
+            Assert.IsNull(live.Monitor.LastLiveEventAt, "Legacy checkpoints must not imply near-real-time ingestion.");
+            MonitorProgress liveTimestampProgress = estimatedProgress with
+            {
+                LiveAfterSeq = 1_000,
+                LastLiveEventAt = clock.GetUtcNow().AddHours(-2)
+            };
+            store.SaveProgress(liveTimestampProgress);
+            Assert.AreEqual(liveTimestampProgress.LastLiveEventAt,
+                (await statusStore.GetAsync(cancellationToken)).Monitor.LastLiveEventAt,
+                "Fresh checkpoint writes and heartbeats must preserve the old stream timestamp.");
+            Assert.AreEqual(liveTimestampProgress, await store.LoadProgressAsync(cancellationToken));
+            Assert.IsNull(liveTimestampProgress.ReturnToArchive().LastLiveEventAt);
+            await using (MySqlCommand timestampCommand = owner.CreateCommand())
+            {
+                timestampCommand.CommandText = "UPDATE JetstreamReplayProgress SET UpdatedAt = @beforeRun";
+                timestampCommand.Parameters.AddWithValue("@beforeRun", live.Monitor.Activity.StartedAt!.Value.AddSeconds(-1).UtcDateTime);
+                await timestampCommand.ExecuteNonQueryAsync(cancellationToken);
+                Assert.IsNull((await statusStore.GetAsync(cancellationToken)).Monitor.LastLiveEventAt,
+                    "A previous run's checkpoint must not imply the restarted worker has caught up.");
+            }
+            store.SaveProgress(liveTimestampProgress with { LastLiveEventAt = clock.GetUtcNow().AddMinutes(1) });
+            Assert.IsNull((await statusStore.GetAsync(cancellationToken)).Monitor.LastLiveEventAt,
+                "Future stream times must not imply that the worker is caught up.");
+            store.SaveProgress(liveTimestampProgress with { LastLiveEventAt = DateTimeOffset.MinValue });
+            Assert.IsNull((await statusStore.GetAsync(cancellationToken)).Monitor.LastLiveEventAt,
+                "Out-of-range timestamps clamped by the SDK must not imply a measurable backlog.");
+            store.SaveProgress(estimatedProgress);
 
             await using var competitor = new MySqlConnection(options.ConnectionString);
             await competitor.OpenAsync(cancellationToken);
@@ -1773,12 +1801,68 @@ public sealed partial class ApplicationTests
         MonitorProgress liveProgress = progress with { LiveAfterSeq = 600 };
         resumed.SaveProgress(liveProgress);
         Assert.AreEqual(liveProgress, await resumed.LoadProgressAsync(cancellationToken));
+        await VerifyLiveCheckpointAsync(resumed, liveProgress, hit, cancellationToken);
         MonitorProgress recovery = liveProgress.ReturnToArchive();
         Assert.AreEqual(600, recovery.AfterSeq);
         Assert.IsNull(recovery.LiveAfterSeq);
         Assert.IsNull(recovery.ArchiveCheckpoint);
         resumed.SaveProgress(recovery);
         Assert.AreEqual(recovery, await resumed.LoadProgressAsync(cancellationToken));
+    }
+
+    private static async Task VerifyLiveCheckpointAsync(MonitorStore store, MonitorProgress initial, Hit hit,
+        CancellationToken cancellationToken)
+    {
+        const int Events = 2_000;
+        var elapsed = Stopwatch.StartNew();
+        for (int index = 1; index <= Events; index++)
+        {
+            store.SaveProgress(initial with { LiveAfterSeq = initial.LiveAfterSeq + index });
+        }
+        TimeSpan perEvent = elapsed.Elapsed;
+        store.SaveProgress(initial);
+
+        int writes = 0;
+        var clock = new Microsoft.Extensions.Time.Testing.FakeTimeProvider();
+        var checkpoint = new LiveCheckpoint(clock, progress =>
+        {
+            store.SaveProgress(progress);
+            writes++;
+        });
+        elapsed.Restart();
+        for (int index = 1; index <= Events; index++)
+        {
+            checkpoint.Processed(initial with { LiveAfterSeq = initial.LiveAfterSeq + index });
+        }
+        Console.WriteLine($"Live checkpoint benchmark: {Events} events, per-event {perEvent.TotalMilliseconds:F1} ms/{Events} writes, "
+            + $"batched {elapsed.Elapsed.TotalMilliseconds:F1} ms/{writes} writes.");
+        Assert.AreEqual(2, writes);
+        MonitorProgress durable = initial with { LiveAfterSeq = initial.LiveAfterSeq + Events };
+        Assert.AreEqual(durable, await store.LoadProgressAsync(cancellationToken));
+
+        await using MySqlCommand count = store.Connection.CreateCommand();
+        count.CommandText = "SELECT COUNT(*) FROM Hits";
+        long before = Convert.ToInt64(await count.ExecuteScalarAsync(cancellationToken));
+        Hit tailHit = hit with { AtUri = new AtUri("at://did:plc:author/app.bsky.feed.post/live-tail") };
+        await store.SaveHitAsync(tailHit, cancellationToken);
+        checkpoint.Processed(durable with { LiveAfterSeq = durable.LiveAfterSeq + 1 });
+        Assert.AreEqual(durable, await store.LoadProgressAsync(cancellationToken),
+            "A committed reply in the unsaved tail must not advance the durable cursor.");
+        count.CommandText = "SELECT UpdatedAt FROM StatisticsUpdate WHERE Id = 1";
+        object? statisticsUpdatedAt = await count.ExecuteScalarAsync(cancellationToken);
+
+        var restarted = new LiveCheckpoint(clock, store.SaveProgress);
+        await store.SaveHitAsync(tailHit, cancellationToken);
+        restarted.Processed(durable with { LiveAfterSeq = durable.LiveAfterSeq + 1 });
+        Assert.AreEqual(statisticsUpdatedAt, await count.ExecuteScalarAsync(cancellationToken),
+            "Redelivery must not change the last-new-hit timestamp.");
+        count.CommandText = "SELECT COUNT(*) FROM Hits";
+        Assert.AreEqual(before + 1, Convert.ToInt64(await count.ExecuteScalarAsync(cancellationToken)),
+            "Replaying the committed tail after restart must not duplicate replies.");
+        Assert.AreEqual(durable, await store.LoadProgressAsync(cancellationToken));
+        count.CommandText = "DELETE FROM Hits WHERE AtUri = @uri";
+        count.Parameters.AddWithValue("@uri", tailHit.AtUri.ToString());
+        await count.ExecuteNonQueryAsync(cancellationToken);
     }
 
     [GeneratedRegex(@"Total Jerry no replies</th><td[^>]*>5</td>")]

@@ -118,7 +118,15 @@ def deploy(app_id, tag, request, sleep=time.sleep, clock=time.monotonic):
     require_vpc((latest.get("active_deployment") or {}).get("spec"), expected_vpc_id)
     if latest != app:
         raise DeploymentError("The app changed while preparing deployment; refusing a stale update.")
-    response = request("PUT", path, {"spec": spec})["app"]
+    # A failed response read does not mean the provider rejected the write.
+    try:
+        response = request("PUT", path, {"spec": spec})["app"]
+    except Exception:
+        raise DeploymentError(
+            "App update outcome is uncertain; the provider may have accepted it. "
+            "Inspect App Platform Networking and Activity before retrying. "
+            "No automatic retry, rollback, or second update was submitted."
+        ) from None
     require_vpc(response.get("spec"), expected_vpc_id, update_accepted=True)
     deployment = response.get("pending_deployment")
     if not deployment:

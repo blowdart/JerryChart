@@ -1,12 +1,14 @@
 """Offline regressions for release spec preservation and deployment outcomes."""
 
 import copy
+import http.client
 import io
+import json
 import os
 from pathlib import Path
 import tempfile
 import unittest
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 import urllib.error
 
 import deploy
@@ -315,6 +317,34 @@ class DeploymentTests(unittest.TestCase):
             with self.assertRaisesRegex(deploy.DeploymentError, r"HTTP 403") as raised:
                 deploy.api_request("sensitive token", "GET", f"/apps/{APP_ID}")
         self.assertNotIn("sensitive", str(raised.exception))
+
+    def test_failed_update_response_warns_of_uncertain_write_without_retry(self):
+        errors = (
+            http.client.IncompleteRead(b"sensitive partial response", 100),
+            ConnectionResetError("sensitive connection details"),
+            TimeoutError("sensitive timeout details"),
+            urllib.error.URLError("sensitive transport details"),
+            json.JSONDecodeError("sensitive response", "sensitive", 0),
+        )
+        for error in errors:
+            with self.subTest(error=type(error).__name__):
+                response = MagicMock()
+                response.__enter__.return_value = response
+                response.read.side_effect = error
+                app_body = json.dumps({"app": fixture()}).encode()
+                with patch("urllib.request.OpenerDirector.open", side_effect=[
+                    io.BytesIO(app_body), io.BytesIO(app_body), response,
+                ]) as opened:
+                    with self.assertRaisesRegex(deploy.DeploymentError, "provider may have accepted") as raised:
+                        deploy.deploy(APP_ID, "new", lambda method, path, body=None:
+                                      deploy.api_request("sensitive token", method, path, body))
+                methods = [call.args[0].get_method() for call in opened.call_args_list]
+                self.assertEqual(methods, ["GET", "GET", "PUT"])
+                self.assertIn("before retrying", str(raised.exception))
+                self.assertIn("No automatic retry, rollback, or second update", str(raised.exception))
+                self.assertNotIn("sensitive", str(raised.exception))
+                self.assertTrue(raised.exception.__suppress_context__)
+                response.__exit__.assert_called_once()
 
     def test_redirect_does_not_forward_authorization(self):
         with self.assertRaisesRegex(deploy.DeploymentError, "redirected"):

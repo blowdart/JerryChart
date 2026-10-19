@@ -15,6 +15,10 @@ function SearchableAuthors({ authors }: { authors: TopReplyAuthor[] }) {
   const [searchNumber, setSearchNumber] = useState(0);
   const row = useRef<HTMLTableRowElement>(null);
   const list = useRef<HTMLDivElement>(null);
+  const suggestionHandle = query.trim().replace(/^@/, "").toLowerCase();
+  const suggestions = suggestionHandle.length >= 2
+    ? authors.filter((author) => author.handle?.toLowerCase().includes(suggestionHandle)).slice(0, 20)
+    : [];
 
   function findAuthor(value: string) {
     const handle = value.trim().replace(/^@/, "").toLowerCase();
@@ -70,7 +74,7 @@ function SearchableAuthors({ authors }: { authors: TopReplyAuthor[] }) {
             className="w-64 max-w-full min-w-0 rounded border border-foreground/50 px-3 py-1 text-sm focus-visible:border-foreground focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-foreground"
           />
           <datalist id={suggestionsId}>
-            {authors.filter((author) => author.handle !== null).map((author) => (
+            {suggestions.map((author) => (
               <option key={author.did} value={`${query.trim().startsWith("@") ? "@" : ""}${author.handle}`} />
             ))}
           </datalist>

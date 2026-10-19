@@ -1,4 +1,4 @@
-import { Fragment } from "react";
+import { Fragment, memo } from "react";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { authorLabel, type TopReplyAuthor } from "@/lib/reply-authors";
 import { ProfileHoverCard } from "@/components/profile-hover-card";
@@ -9,7 +9,7 @@ function breakableHandle(author: TopReplyAuthor) {
   ));
 }
 
-export function ReplyAuthorsTable({ authors, label, clickable = false, highlightedDid, highlightedRowRef, scrollable = false, scrollRef }: {
+export const ReplyAuthorsTable = memo(function ReplyAuthorsTable({ authors, label, clickable = false, highlightedDid, highlightedRowRef, scrollable = false, scrollRef }: {
   authors: TopReplyAuthor[];
   label: string;
   clickable?: boolean;
@@ -60,4 +60,4 @@ export function ReplyAuthorsTable({ authors, label, clickable = false, highlight
       </TableBody>
     </Table>
   );
-}
+});

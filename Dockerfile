@@ -1,7 +1,7 @@
 # syntax=docker/dockerfile:1
 FROM mcr.microsoft.com/dotnet/sdk:10.0 AS source
 WORKDIR /src
-COPY global.json Directory.Build.props Directory.Packages.props nuget.config ./
+COPY global.json Directory.Build.props Directory.Packages.props nuget.config version.json ./
 COPY JerryChart.Api/ JerryChart.Api/
 COPY JerryChart.Data/ JerryChart.Data/
 COPY JerryChart.Monitor/ JerryChart.Monitor/

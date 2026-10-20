@@ -4,13 +4,13 @@ import { LocalizedTime } from "@/components/localized-time";
 
 export function StatisticsLastUpdated({ updatedAt }: { updatedAt: string | null }) {
   if (updatedAt === null) {
-    return <p>&quot;Jerry no&quot; last detected: not yet recorded</p>;
+    return <span className="block"><strong>&quot;Jerry No&quot;</strong> last detected: not yet recorded</span>;
   }
 
   return (
-    <p>
-      &quot;Jerry no&quot; last detected:{" "}
+    <span className="block">
+      <strong>&quot;Jerry No&quot;</strong> last detected:{" "}
       <LocalizedTime timestamp={updatedAt} />
-    </p>
+    </span>
   );
 }

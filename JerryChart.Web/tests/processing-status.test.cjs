@@ -19,6 +19,9 @@ function modules(overrides = {}) {
     const nativeRequire = createRequire(file);
     const requireModule = (name) => {
       if (Object.hasOwn(overrides, name)) return overrides[name];
+      if (name === "@/components/refresh-statistics") {
+        return { RefreshStatistics: () => React.createElement("button", { type: "button" }, "Refresh") };
+      }
       if (name === "server-only") return {};
       if (!name.startsWith("@/")) return nativeRequire(name);
       const relativePath = name.slice(2);
@@ -737,10 +740,10 @@ test("client keeps the main Jetstream summary concise and retains the approximat
   const initial = { status: status("archive", "completed"), error: null };
   initial.status.monitor.archiveEstimate = { remainingSeconds: 7380, measuredAt: observedAt };
   const html = component.render(initial);
-  const summary = html.match(/<button\b[^>]*aria-label="Processing status details"[^>]*>[\s\S]*?<\/button>/)?.[0];
+  const summary = html.slice(0, html.indexOf("<dialog"));
   const details = html.match(/<dialog\b[\s\S]*?<\/dialog>/)?.[0];
-  assert.ok(summary, "The status summary must be an accessible dialog trigger.");
-  assert.match(summary, /class="ml-auto block w-fit max-w-full rounded-lg text-right/);
+  assert.match(summary, /aria-label="Processing status details"/);
+  assert.match(summary, /class="ml-auto w-fit max-w-full space-y-2 rounded-lg border p-4 text-right/);
   assert.match(summary, /Jetstream:<\/strong> Historical replay in progress\./);
   assert.doesNotMatch(summary, /Approximate time remaining/);
   assert.match(summary, /View detailed status/);
@@ -774,7 +777,7 @@ test("client displays archive stall progress and scheduled retry timestamps with
   };
   initial.status.monitor.archiveEstimate = { remainingSeconds: 7380, measuredAt: observedAt };
   const html = component.render(initial);
-  const summary = html.match(/<button\b[^>]*aria-label="Processing status details"[^>]*>[\s\S]*?<\/button>/)?.[0];
+  const summary = html.slice(0, html.indexOf("<dialog"));
   const details = html.match(/<dialog\b[\s\S]*?<\/dialog>/)?.[0];
   assert.doesNotMatch(html.slice(0, html.indexOf("<dialog")), /aria-label="Heartbeat"|♥|parent URIs/);
   assert.match(details, /Jetstream heartbeat:/);

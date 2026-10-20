@@ -55,7 +55,8 @@ jobs:
           tag="$GITHUB_SHA-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
           docker build --target api -t "$REGISTRY/jerrychart-api:$tag" .
           docker build --target monitor -t "$REGISTRY/jerrychart-monitor:$tag" .
-          docker build -f JerryChart.Web/Dockerfile -t "$REGISTRY/jerrychart-web:$tag" .
+          docker build --build-arg GITHUB_SHA="$GITHUB_SHA" \
+            -f JerryChart.Web/Dockerfile -t "$REGISTRY/jerrychart-web:$tag" .
           docker save \
             "$REGISTRY/jerrychart-api:$tag" \
             "$REGISTRY/jerrychart-monitor:$tag" \

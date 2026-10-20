@@ -5,6 +5,9 @@ namespace JerryChart.Api;
 
 internal static partial class ApiLog
 {
+    [LoggerMessage(3, LogLevel.Information, "JerryChart API version {Version}.")]
+    internal static partial void Started(ILogger logger, string version);
+
     [LoggerMessage(1, LogLevel.Information, "Statistics database schema initialized.")]
     internal static partial void DatabaseInitialized(ILogger logger);
 

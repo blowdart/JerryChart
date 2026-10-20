@@ -14,6 +14,12 @@ Tailwind CSS. Historical replay resumes from durable checkpoints before
 switching to live Jetstream monitoring. Statistics reflect data recorded so
 far, not necessarily complete historical coverage.
 
+The .NET API, monitor, and AppHost use Nerdbank.GitVersioning with a `1.0`
+base version and print their assembly version at startup. The frontend image
+embeds its source commit SHA during the Docker build and links that build
+identity from the footer; local builds without a valid SHA display
+“Development build”.
+
 | Project | Role |
 | --- | --- |
 | `JerryChart.AppHost` | Orchestrates MySQL, the API, CLI, and frontend |

@@ -3,6 +3,7 @@
 !Directory.Build.props
 !Directory.Packages.props
 !nuget.config
+!version.json
 !JerryChart.Api/
 !JerryChart.Api/**
 !JerryChart.Data/

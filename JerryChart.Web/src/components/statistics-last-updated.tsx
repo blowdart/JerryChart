@@ -12,9 +12,9 @@ export function StatisticsLastUpdated({ updatedAt, atUri }: { updatedAt: string 
     <span className="block">
       <strong>&quot;Jerry No&quot;</strong> last detected:{" "}
       {atUri
-        ? <a href={blueskyPostUrl(atUri)} aria-label="View the matching Jerry no reply on Bluesky"
-          className="underline underline-offset-4">
+        ? <a href={blueskyPostUrl(atUri)} className="underline underline-offset-4">
           <LocalizedTime timestamp={updatedAt} />
+          <span className="sr-only"> (view the matching reply on Bluesky)</span>
         </a>
         : <LocalizedTime timestamp={updatedAt} />}
     </span>

@@ -145,8 +145,9 @@ test("processing status places the last detection directly below its heading", (
       assert.match(markup, /not yet recorded/);
     } else {
       assert.match(markup, /href="https:\/\/bsky\.app\/profile\/did:plc:author\/post\/matching-reply"/);
-      assert.match(markup, /aria-label="View the matching Jerry no reply on Bluesky"/);
       assert.match(markup, /dateTime="2026-10-19T12:00:00Z"/i);
+      assert.match(markup, /<a href="https:\/\/bsky\.app\/profile\/did:plc:author\/post\/matching-reply"[^>]*><time[^>]*dateTime="2026-10-19T12:00:00Z"[^>]*>.*?<\/time><span class="sr-only"> \(view the matching reply on Bluesky\)<\/span><\/a>/);
+      assert.doesNotMatch(markup, /aria-label="View the matching Jerry no reply on Bluesky"/);
     }
   }
 });

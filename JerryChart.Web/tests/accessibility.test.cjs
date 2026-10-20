@@ -146,9 +146,262 @@ test("processing status places the last detection directly below its heading", (
     } else {
       assert.match(markup, /href="https:\/\/bsky\.app\/profile\/did:plc:author\/post\/matching-reply"/);
       assert.match(markup, /dateTime="2026-10-19T12:00:00Z"/i);
-      assert.match(markup, /<a href="https:\/\/bsky\.app\/profile\/did:plc:author\/post\/matching-reply"[^>]*><time[^>]*dateTime="2026-10-19T12:00:00Z"[^>]*>.*?<\/time><span class="sr-only"> \(view the matching reply on Bluesky\)<\/span><\/a>/);
+      assert.match(markup, /<a\b[^>]*href="https:\/\/bsky\.app\/profile\/did:plc:author\/post\/matching-reply"[^>]*><time[^>]*dateTime="2026-10-19T12:00:00Z"[^>]*>.*?<\/time><span class="sr-only"> \(view the matching reply on Bluesky\)<\/span><\/a>/);
       assert.doesNotMatch(markup, /aria-label="View the matching Jerry no reply on Bluesky"/);
     }
+  }
+});
+
+test("last-detected timestamp keeps its empty states and never server-renders third-party previews", () => {
+  const { StatisticsLastUpdated } = loadModule("components\\statistics-last-updated.tsx");
+  for (const props of [
+    { updatedAt: null, atUri: null },
+    { updatedAt: "2026-10-19T12:00:00Z", atUri: null },
+    { updatedAt: "2026-10-19T12:00:00Z", atUri: "at://did:plc:author/app.bsky.feed.post/reply" },
+  ]) {
+    const markup = renderToStaticMarkup(React.createElement(StatisticsLastUpdated, props));
+    assert.doesNotMatch(markup, /iframe|embed\.bsky\.app|<script/);
+    assert.equal(markup.includes("<time"), props.updatedAt !== null);
+    assert.equal(markup.includes("<a "), props.atUri !== null);
+    assert.equal(markup.includes("not yet recorded"), props.updatedAt === null);
+  }
+});
+
+function replyPreviewHarness() {
+  const states = [], refs = [], effects = [];
+  let stateIndex = 0, refIndex = 0, effectIndex = 0;
+  const listeners = new Map(), timers = new Map();
+  let nextTimer = 0;
+  const source = {};
+  let focused = 0;
+  const previousWindow = global.window;
+  global.window = {
+    addEventListener(name, handler) { listeners.set(name, handler); },
+    removeEventListener(name, handler) { if (listeners.get(name) === handler) listeners.delete(name); },
+    setTimeout(callback, delay) {
+      const id = ++nextTimer;
+      timers.set(id, { callback, delay });
+      return id;
+    },
+    clearTimeout(id) { timers.delete(id); },
+  };
+  const hooks = {
+    ...React,
+    useId() { return "reply-preview-id"; },
+    useRef(initial) {
+      const index = refIndex++;
+      refs[index] ??= { current: initial };
+      return refs[index];
+    },
+    useState(initial) {
+      const index = stateIndex++;
+      if (!(index in states)) states[index] = initial;
+      return [states[index], value => {
+        states[index] = typeof value === "function" ? value(states[index]) : value;
+      }];
+    },
+    useEffect(callback, deps) {
+      const index = effectIndex++;
+      const prior = effects[index];
+      if (prior && deps.every((value, i) => Object.is(value, prior.deps[i]))) return;
+      prior?.cleanup?.();
+      effects[index] = { deps, cleanup: callback() };
+    },
+  };
+  const { PostHoverCard } = loadModule("components\\post-hover-card.tsx", {
+    react: hooks,
+    "@base-ui/react/popover": {
+      Popover: { Root: "section", Trigger: "a", Portal: React.Fragment, Positioner: "div", Popup: "aside" },
+    },
+  });
+  function find(node, type) {
+    if (Array.isArray(node)) return node.map(child => find(child, type)).find(Boolean);
+    if (!React.isValidElement(node)) return null;
+    return node.type === type ? node : find(node.props.children, type);
+  }
+  return {
+    source, timers, listeners, find,
+    get focused() { return focused; },
+    render(atUri = "at://did:plc:erlxz4sppc5uv7m4efmcvpsf/app.bsky.feed.post/3my5n4tyxfcud") {
+      stateIndex = refIndex = effectIndex = 0;
+      const raw = PostHoverCard({ atUri, children: "timestamp" });
+      const tree = React.cloneElement(raw, {
+        onOpenChange: (next) => raw.props.onOpenChange(next, { reason: "none" }),
+      });
+      find(tree, "a").props.render.props.ref.current = { focus() { focused++; } };
+      const iframe = find(tree, "iframe");
+      if (iframe) iframe.props.ref.current = { contentWindow: source };
+      return tree;
+    },
+    dispose() {
+      effects.forEach(effect => effect.cleanup?.());
+      global.window = previousWindow;
+    },
+  };
+}
+
+test("reply preview loads only the official privacy-enforcing iframe on demand and removes it on close", () => {
+  const harness = replyPreviewHarness();
+  const originalFetch = global.fetch;
+  global.fetch = () => { throw new Error("JerryChart must not fetch reply preview content."); };
+  try {
+    let tree = harness.render();
+    const link = harness.find(tree, "a");
+    assert.equal(link.props.render.props.href,
+      "https://bsky.app/profile/did:plc:erlxz4sppc5uv7m4efmcvpsf/post/3my5n4tyxfcud");
+    assert.equal(harness.find(tree, "iframe"), undefined);
+    assert.equal(harness.timers.size, 0);
+    tree.props.onOpenChange(true);
+    tree = harness.render();
+    const iframe = harness.find(tree, "iframe");
+    const url = new URL(iframe.props.src);
+    assert.equal(url.origin, "https://embed.bsky.app");
+    assert.equal(url.pathname,
+      "/embed/did:plc:erlxz4sppc5uv7m4efmcvpsf/app.bsky.feed.post/3my5n4tyxfcud");
+    assert.equal(url.searchParams.get("id"), "reply-preview-id");
+    assert.equal(url.searchParams.get("colorMode"), "system");
+    assert.equal(url.searchParams.has("ref_url"), false);
+    assert.equal(iframe.props.referrerPolicy, "no-referrer");
+    assert.equal(iframe.props.title, "Matching reply on Bluesky");
+    assert.equal(iframe.props.sandbox,
+      "allow-scripts allow-same-origin allow-popups allow-popups-to-escape-sandbox");
+    assert.equal(harness.find(tree, "script"), undefined);
+    assert.equal(harness.find(tree, "img"), undefined);
+    assert.equal(harness.find(tree, "aside").props["aria-label"], "Matching reply preview");
+    assert.match(harness.find(tree, "aside").props.className, /max-h-\[var\(--available-height\)\]/);
+    const close = harness.find(tree, "button");
+    assert.equal(close.props["aria-label"], "Close reply preview");
+    assert.equal(close.props.title, close.props["aria-label"]);
+    assert.equal(close.props.children.props["aria-hidden"], "true");
+    assert.match(renderToStaticMarkup(close), /<svg/);
+    assert.doesNotMatch(renderToStaticMarkup(close), />Close/);
+    assert.match(close.props.className, /size-8/);
+    assert.match(close.props.className, /focus-visible:outline-foreground/);
+    close.props.onClick();
+    assert.equal(harness.focused, 1);
+    tree = harness.render();
+    assert.equal(harness.find(tree, "iframe"), undefined);
+    assert.equal(harness.listeners.size, 0);
+    assert.equal(harness.timers.size, 0);
+    tree.props.onOpenChange(true);
+    tree = harness.render();
+    assert.equal(harness.find(tree, "iframe").props.height, 400);
+    assert.equal(harness.find(tree, "p").props.role, "status");
+    assert.equal(harness.timers.size, 1);
+    assert.ok(harness.find(tree, "iframe"));
+    // Base UI routes keyboard Escape and pointer dismissal through this callback.
+    tree.props.onOpenChange(false);
+    assert.equal(harness.find(harness.render(), "iframe"), undefined);
+  } finally {
+    global.fetch = originalFetch;
+    harness.dispose();
+  }
+});
+
+test("image previews resize after media loads while retaining keyboard-accessible bounded scrolling", () => {
+  const harness = replyPreviewHarness();
+  try {
+    harness.render().props.onOpenChange(true);
+    let tree = harness.render();
+    const region = harness.find(tree, "iframe").props;
+    assert.match(region.className, /min-w-\[300px\]/);
+    function findRegion(node) {
+      if (Array.isArray(node)) return node.map(findRegion).find(Boolean);
+      if (!React.isValidElement(node)) return null;
+      return node.props.role === "region" ? node : findRegion(node.props.children);
+    }
+    const scroller = findRegion(tree);
+    assert.equal(scroller.props.tabIndex, 0);
+    assert.match(scroller.props["aria-label"], /Scroll/);
+    assert.match(scroller.props.className, /max-h-\[60vh\] overflow-auto/);
+    assert.match(scroller.props.className, /focus-visible:outline-foreground/);
+    for (const height of [220, 850, 1200]) {
+      harness.listeners.get("message")({
+        origin: "https://embed.bsky.app", source: harness.source,
+        data: { id: "reply-preview-id", height },
+      });
+      tree = harness.render();
+      assert.equal(harness.find(tree, "iframe").props.height, height);
+      assert.match(harness.find(tree, "aside").props.children.at(-1).props.className, /shrink-0/);
+      assert.equal(harness.find(tree, "button").props["aria-label"], "Close reply preview");
+    }
+  } finally {
+    harness.dispose();
+  }
+});
+
+test("reply preview ignores forged resize messages and rejects unsafe AT URIs", () => {
+  const harness = replyPreviewHarness();
+  try {
+    harness.render().props.onOpenChange(true);
+    let tree = harness.render();
+    const resize = harness.listeners.get("message");
+    const valid = { origin: "https://embed.bsky.app", source: harness.source, data: { id: "reply-preview-id", height: 232.2 } };
+    for (const event of [
+      { ...valid, origin: "https://attacker.example" },
+      { ...valid, source: {} },
+      ...[null, "message", {}, { id: "wrong-id", height: 200 },
+        ...[0, -1, Infinity, NaN, 10001, "300"].map(height => ({ id: "reply-preview-id", height })),
+      ].map(data => ({ ...valid, data })),
+    ]) {
+      resize(event);
+      tree = harness.render();
+      assert.equal(harness.find(tree, "iframe").props.height, 400);
+    }
+    resize(valid);
+    tree = harness.render();
+    assert.equal(harness.find(tree, "iframe").props.height, 233);
+    assert.equal(harness.find(tree, "p"), undefined);
+    assert.equal(harness.timers.size, 0);
+    harness.find(tree, "iframe").props.ref.current = null;
+    resize(valid);
+    for (const uri of [
+      "https://attacker.example", "at://did:plc:author/app.bsky.feed.post/../other",
+      "at://did:plc:author/app.bsky.feed.post/key?ref_url=private",
+    ]) {
+      assert.throws(() => harness.render(uri), /Invalid Bluesky post URI/);
+    }
+  } finally {
+    harness.dispose();
+  }
+});
+
+test("reply preview reports load failures, retains navigation, clears timeouts and resets on reopen", () => {
+  const harness = replyPreviewHarness();
+  try {
+    harness.render().props.onOpenChange(true);
+    let tree = harness.render();
+    assert.equal(harness.find(tree, "p").props.role, "status");
+    const timer = [...harness.timers.values()][0];
+    assert.equal(timer.delay, 15000);
+    harness.find(tree, "iframe").props.onLoad?.();
+    tree = harness.render();
+    assert.equal(harness.find(tree, "p").props.role, "status");
+    assert.equal(harness.timers.size, 1,
+      "An iframe load event is not evidence that the embed has rendered.");
+    timer.callback();
+    tree = harness.render();
+    assert.equal(harness.find(tree, "p").props.role, "alert");
+    assert.match(harness.find(tree, "p").props.children, /Unable to load/);
+    assert.match(harness.find(tree, "aside").props.children.at(-1).props.href, /^https:\/\/bsky\.app\//);
+    harness.find(tree, "iframe").props.onLoad?.();
+    assert.equal(harness.find(harness.render(), "p").props.role, "alert");
+    harness.listeners.get("message")({
+      origin: "https://embed.bsky.app", source: harness.source,
+      data: { id: "reply-preview-id", height: 250 },
+    });
+    tree = harness.render();
+    assert.equal(harness.find(tree, "p"), undefined);
+    assert.equal(harness.timers.size, 0);
+    harness.find(tree, "iframe").props.onError();
+    assert.equal(harness.find(harness.render(), "p").props.role, "alert");
+    tree.props.onOpenChange(false);
+    tree = harness.render();
+    tree.props.onOpenChange(true);
+    tree = harness.render();
+    assert.equal(harness.find(tree, "p").props.role, "status");
+  } finally {
+    harness.dispose();
   }
 });
 

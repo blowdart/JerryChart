@@ -677,12 +677,46 @@ public sealed partial class ApplicationTests
             var hit = new Hit(new DateTimeOffset(2006, 1, 1, 0, 0, 0, TimeSpan.Zero),
                 new AtUri("at://did:plc:timestamp/app.bsky.feed.post/first"), new Did("did:plc:timestamp"),
                 StatisticsStore.RightJerryDid, ParentPost(StatisticsStore.RightJerryDid, "timestamp-parent"));
+            var wrongJerryHit = hit with
+            {
+                AtUri = new AtUri("at://did:plc:timestamp/app.bsky.feed.post/wrong-jerry"),
+                ParentAuthorDid = new Did("did:plc:wrongjerry"),
+                ParentAtUri = ParentPost("did:plc:wrongjerry", "timestamp-parent")
+            };
+            await monitor.SaveHitAsync(wrongJerryHit, cancellationToken);
+            Assert.AreEqual(new StatisticsLastUpdated(null, null),
+                await statistics.GetLastUpdatedAsync(cancellationToken),
+                "Replies to other accounts must not establish a last-detected timestamp.");
+            Assert.AreEqual(new ReplySummary(1, 0, 1), await statistics.GetReplySummaryAsync(cancellationToken),
+                "Wrong-Jerry replies must still contribute to their separate counter.");
+            await using MySqlCommand legacyUpdate = connection.CreateCommand();
+            legacyUpdate.CommandText = """
+                INSERT INTO StatisticsUpdate (Id, UpdatedAt, AtUri)
+                VALUES (1, UTC_TIMESTAMP(6), @uri)
+                """;
+            legacyUpdate.Parameters.AddWithValue("@uri", wrongJerryHit.AtUri.ToString());
+            await legacyUpdate.ExecuteNonQueryAsync(cancellationToken);
+            Assert.AreEqual(new StatisticsLastUpdated(null, null),
+                await statistics.GetLastUpdatedAsync(cancellationToken),
+                "A pre-upgrade timestamp associated with the wrong Jerry must not be displayed.");
+            await monitor.InitializeAsync(cancellationToken);
+            Assert.AreEqual(new StatisticsLastUpdated(null, null),
+                await statistics.GetLastUpdatedAsync(cancellationToken),
+                "Restart must not expose or invent a right-Jerry ingestion time from legacy wrong-Jerry metadata.");
             await monitor.SaveHitAsync(hit, cancellationToken);
             DateTimeOffset? first = (await statistics.GetLastUpdatedAsync(cancellationToken)).UpdatedAt;
             Assert.AreEqual(hit.AtUri.ToString(), (await statistics.GetLastUpdatedAsync(cancellationToken)).AtUri);
             Assert.IsNotNull(first);
             Assert.IsLessThan(1, Math.Abs((DateTimeOffset.UtcNow - first.Value).TotalMinutes));
             Assert.AreEqual(TimeSpan.Zero, first.Value.Offset);
+            await monitor.SaveHitAsync(wrongJerryHit with
+            {
+                AtUri = new AtUri("at://did:plc:timestamp/app.bsky.feed.post/newer-wrong-jerry")
+            }, cancellationToken);
+            Assert.AreEqual(new StatisticsLastUpdated(first, hit.AtUri.ToString()),
+                await statistics.GetLastUpdatedAsync(cancellationToken),
+                "A newer reply to another account must not replace the last reply to Jerry Chen.");
+            Assert.AreEqual(new ReplySummary(3, 1, 2), await statistics.GetReplySummaryAsync(cancellationToken));
 
             await using MySqlCommand command = connection.CreateCommand();
             // Simulate upgrading a database with hits but no recorded ingestion time.
@@ -727,6 +761,26 @@ public sealed partial class ApplicationTests
             Assert.IsTrue(persisted > sentinel);
             Assert.AreEqual("at://did:plc:timestamp/app.bsky.feed.post/third",
                 (await statistics.GetLastUpdatedAsync(cancellationToken)).AtUri);
+            command.CommandText = "SELECT UpdatedAt FROM StatisticsUpdate WHERE Id = 1";
+            object? retainedTimestamp = await command.ExecuteScalarAsync(cancellationToken);
+            command.CommandText = """
+                UPDATE StatisticsUpdate SET AtUri = 'at://did:plc:timestamp/app.bsky.feed.post/missing' WHERE Id = 1
+                """;
+            await command.ExecuteNonQueryAsync(cancellationToken);
+            Assert.AreEqual(new StatisticsLastUpdated(null, null), await statistics.GetLastUpdatedAsync(cancellationToken),
+                "A timestamp whose reply is no longer retained must not be displayed.");
+            command.CommandText = """
+                UPDATE StatisticsUpdate SET AtUri = NULL WHERE Id = 1
+                """;
+            await command.ExecuteNonQueryAsync(cancellationToken);
+            Assert.AreEqual(new StatisticsLastUpdated(null, null), await statistics.GetLastUpdatedAsync(cancellationToken),
+                "Legacy timestamps without a reply cannot be classified as right-Jerry detections.");
+            command.CommandText = """
+                UPDATE StatisticsUpdate SET UpdatedAt = @updatedAt,
+                    AtUri = 'at://did:plc:timestamp/app.bsky.feed.post/third' WHERE Id = 1
+                """;
+            command.Parameters.AddWithValue("@updatedAt", retainedTimestamp);
+            await command.ExecuteNonQueryAsync(cancellationToken);
             await new ActorStore(connection).SaveAsync(new ActorRefreshRequest(hit.AuthorDid, 0),
                 new Handle("timestamp.example"), cancellationToken);
             Assert.AreEqual(persisted, (await statistics.GetLastUpdatedAsync(cancellationToken)).UpdatedAt);

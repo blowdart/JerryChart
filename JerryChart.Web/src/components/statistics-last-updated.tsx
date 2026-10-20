@@ -1,7 +1,7 @@
 "use client";
 
 import { LocalizedTime } from "@/components/localized-time";
-import { blueskyPostUrl } from "@/lib/reply-posts";
+import { PostHoverCard } from "@/components/post-hover-card";
 
 export function StatisticsLastUpdated({ updatedAt, atUri }: { updatedAt: string | null; atUri: string | null }) {
   if (updatedAt === null) {
@@ -12,10 +12,10 @@ export function StatisticsLastUpdated({ updatedAt, atUri }: { updatedAt: string 
     <span className="block">
       <strong>&quot;Jerry No&quot;</strong> last detected:{" "}
       {atUri
-        ? <a href={blueskyPostUrl(atUri)} className="underline underline-offset-4">
+        ? <PostHoverCard key={atUri} atUri={atUri}>
           <LocalizedTime timestamp={updatedAt} />
           <span className="sr-only"> (view the matching reply on Bluesky)</span>
-        </a>
+        </PostHoverCard>
         : <LocalizedTime timestamp={updatedAt} />}
     </span>
   );

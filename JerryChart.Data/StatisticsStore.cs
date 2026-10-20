@@ -106,9 +106,9 @@ public sealed class StatisticsStore(MySqlDataSource dataSource, TimeProvider tim
             .ToArray();
     }
 
-    /// <summary>Gets the persisted ingestion time of the most recent new hit, excluding duplicate deliveries.</summary>
+    /// <summary>Gets the persisted ingestion time of the most recent new reply to Jerry Chen, excluding duplicate deliveries.</summary>
     /// <param name="cancellationToken">A token to cancel the database operation.</param>
-    /// <returns>The UTC timestamp, or an unknown timestamp before the first tracked insertion.</returns>
+    /// <returns>The UTC timestamp and reply URI, or unknown values when no recorded timestamp belongs to a retained reply to Jerry Chen.</returns>
     /// <exception cref="MySqlException">The database connection or query fails.</exception>
     /// <exception cref="OperationCanceledException">The operation is canceled.</exception>
     /// <exception cref="ObjectDisposedException">The data source has been disposed.</exception>
@@ -116,7 +116,13 @@ public sealed class StatisticsStore(MySqlDataSource dataSource, TimeProvider tim
     {
         await using var connection = await dataSource.OpenConnectionAsync(cancellationToken);
         await using var command = connection.CreateCommand();
-        command.CommandText = "SELECT UpdatedAt, AtUri FROM StatisticsUpdate WHERE Id = 1";
+        command.CommandText = """
+            SELECT s.UpdatedAt, s.AtUri
+            FROM StatisticsUpdate s
+            INNER JOIN Hits h ON h.AtUriHash = UNHEX(SHA2(s.AtUri, 256)) AND h.AtUri = s.AtUri
+            WHERE s.Id = 1 AND h.ParentAuthorDid = @rightJerry
+            """;
+        command.Parameters.AddWithValue("@rightJerry", RightJerryDid.ToString());
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
         if (!await reader.ReadAsync(cancellationToken))
         {

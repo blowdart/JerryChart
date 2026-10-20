@@ -11,7 +11,7 @@ export default function PrivacyPolicy() {
     <main className="mx-auto w-full max-w-3xl space-y-8 px-6 py-12">
       <header className="space-y-2">
         <h1 className="text-4xl font-semibold tracking-tight">Privacy policy</h1>
-        <p className="text-sm text-muted-foreground">Last updated: October 6, 2026</p>
+        <p className="text-sm text-muted-foreground">Last updated: October 20, 2026</p>
         <p>
           Jerry No is a personal project run by Barry Dorrans. It counts public
           Bluesky replies containing &quot;Jerry no&quot; and displays statistics
@@ -82,6 +82,16 @@ export default function PrivacyPolicy() {
           requests disclose your IP address and the requested post, profile, or
           handle to those services. API lookups do not send Bluesky login
           credentials and use short-lived, in-memory caches.
+        </p>
+        <p>
+          Hovering over or focusing the last-detected timestamp loads an official
+          Bluesky post embed in your browser, not on our server. The embed contacts
+          Bluesky and may load media from its services. These requests disclose
+          your IP address and the requested post to Bluesky. We do not send the
+          referring page URL. Bluesky&apos;s embed hides posts whose authors
+          request that their posts not be shown to logged-out visitors, including
+          quoted posts. Closing the preview removes the embed; we do not cache its
+          content.
         </p>
         <p>
           Following a Bluesky profile or post link takes you to another service,

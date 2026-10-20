@@ -121,7 +121,8 @@ internal sealed class MonitorStore(MySqlConnection connection)
 
             INSERT INTO StatisticsUpdate (Id, UpdatedAt, AtUri)
             SELECT 1, UTC_TIMESTAMP(6), @uri
-            WHERE NOT EXISTS (SELECT 1 FROM Hits WHERE AtUriHash = @hash)
+            WHERE @parent = @rightJerry
+                AND NOT EXISTS (SELECT 1 FROM Hits WHERE AtUriHash = @hash)
             ON DUPLICATE KEY UPDATE
                 AtUri = IF(UTC_TIMESTAMP(6) >= UpdatedAt, @uri, AtUri),
                 UpdatedAt = GREATEST(UpdatedAt, UTC_TIMESTAMP(6));
@@ -138,6 +139,7 @@ internal sealed class MonitorStore(MySqlConnection connection)
         command.Parameters.AddWithValue("@createdAt", hit.CreatedAt.UtcDateTime);
         command.Parameters.AddWithValue("@author", hit.AuthorDid.ToString());
         command.Parameters.AddWithValue("@parent", hit.ParentAuthorDid.ToString());
+        command.Parameters.AddWithValue("@rightJerry", StatisticsStore.RightJerryDid.ToString());
         command.Parameters.AddWithValue("@parentHash", SHA256.HashData(Encoding.UTF8.GetBytes(parentAtUri)));
         command.Parameters.AddWithValue("@parentUri", parentAtUri);
         command.Parameters.AddWithValue("@status", (byte)ParentUriBackfillStatus.Resolved);

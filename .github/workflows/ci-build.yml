@@ -130,11 +130,23 @@ jobs:
       - name: Build
         run: npm run build
 
+      - name: Install browser for interaction regressions
+        run: npx playwright install --with-deps chromium
+
+      - name: Test real browser interactions
+        run: >-
+          node --test
+          --test-reporter=spec --test-reporter-destination=stdout
+          --test-reporter=junit --test-reporter-destination=browser-tests.xml
+          tests/browser/*.test.cjs
+
       - name: Preserve test results
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: frontend-test-results
-          path: JerryChart.Web/frontend-tests.xml
+          path: |
+            JerryChart.Web/frontend-tests.xml
+            JerryChart.Web/browser-tests.xml
           if-no-files-found: warn
           retention-days: 14

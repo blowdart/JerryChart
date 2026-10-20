@@ -119,10 +119,12 @@ internal sealed class MonitorStore(MySqlConnection connection)
             VALUES (@author), (@parent)
             ON DUPLICATE KEY UPDATE Did = Did;
 
-            INSERT INTO StatisticsUpdate (Id, UpdatedAt)
-            SELECT 1, UTC_TIMESTAMP(6)
+            INSERT INTO StatisticsUpdate (Id, UpdatedAt, AtUri)
+            SELECT 1, UTC_TIMESTAMP(6), @uri
             WHERE NOT EXISTS (SELECT 1 FROM Hits WHERE AtUriHash = @hash)
-            ON DUPLICATE KEY UPDATE UpdatedAt = GREATEST(UpdatedAt, UTC_TIMESTAMP(6));
+            ON DUPLICATE KEY UPDATE
+                AtUri = IF(UTC_TIMESTAMP(6) >= UpdatedAt, @uri, AtUri),
+                UpdatedAt = GREATEST(UpdatedAt, UTC_TIMESTAMP(6));
 
             INSERT INTO Hits (AtUriHash, AtUri, CreatedAt, AuthorDid, ParentAuthorDid,
                 ParentAtUriHash, ParentAtUri, ParentUriBackfillStatus)

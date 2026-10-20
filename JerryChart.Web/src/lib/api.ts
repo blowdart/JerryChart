@@ -1,7 +1,7 @@
 import "server-only";
 import { isMonthlyReplySeries, type MonthlyReplyCount } from "@/lib/monthly-replies";
 import { isReplyAuthorList, type TopReplyAuthor } from "@/lib/reply-authors";
-import { isReplyPostList, type TopReplyPost } from "@/lib/reply-posts";
+import { isBlueskyPostUri, isReplyPostList, type TopReplyPost } from "@/lib/reply-posts";
 import { isProcessingStatus, type ProcessingStatus } from "@/lib/processing-status";
 
 export async function getProcessingStatus(signal?: AbortSignal): Promise<ProcessingStatus> {
@@ -49,7 +49,26 @@ export async function getTopRightJerryPosts(): Promise<TopReplyPost[]> {
   return posts;
 }
 
-export async function getStatisticsLastUpdated(): Promise<string | null> {
+export interface StatisticsLastUpdated {
+  updatedAt: string | null;
+  atUri: string | null;
+}
+
+function isStatisticsLastUpdated(value: unknown): value is StatisticsLastUpdated {
+  return typeof value === "object" &&
+    value !== null &&
+    "updatedAt" in value &&
+    (value.updatedAt === null || (
+      typeof value.updatedAt === "string" &&
+      /(?:Z|\+00:00)$/.test(value.updatedAt) &&
+      Number.isFinite(Date.parse(value.updatedAt))
+    )) &&
+    "atUri" in value &&
+    (value.atUri === null || isBlueskyPostUri(value.atUri)) &&
+    (value.updatedAt !== null || value.atUri === null);
+}
+
+export async function getStatisticsLastUpdated(): Promise<StatisticsLastUpdated> {
   const response = await fetch(apiUrl("/statistics/last-updated"), {
     cache: "no-store",
     signal: AbortSignal.timeout(10_000),
@@ -59,20 +78,11 @@ export async function getStatisticsLastUpdated(): Promise<string | null> {
   }
 
   const result: unknown = await response.json();
-  if (
-    typeof result !== "object" ||
-    result === null ||
-    !("updatedAt" in result) ||
-    !(result.updatedAt === null || (
-      typeof result.updatedAt === "string" &&
-      /(?:Z|\+00:00)$/.test(result.updatedAt) &&
-      Number.isFinite(Date.parse(result.updatedAt))
-    ))
-  ) {
+  if (!isStatisticsLastUpdated(result)) {
     throw new Error("The API returned an invalid statistics update time.");
   }
 
-  return result.updatedAt;
+  return result;
 }
 
 interface ReplySummary {

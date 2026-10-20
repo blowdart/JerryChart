@@ -18,9 +18,10 @@ type RefreshDisplay =
   | { kind: "refreshing" }
   | { kind: "paused" };
 
-export function ProcessingStatus({ initial, lastDetectedAt = null }: {
+export function ProcessingStatus({ initial, lastDetectedAt = null, lastDetectedPostAtUri = null }: {
   initial: InitialStatus;
   lastDetectedAt?: string | null;
+  lastDetectedPostAtUri?: string | null;
 }) {
   const [snapshot, setSnapshot] = useState(initial.status);
   const [error, setError] = useState(initial.error);
@@ -149,7 +150,7 @@ export function ProcessingStatus({ initial, lastDetectedAt = null }: {
       {error && <p role="alert">{error}</p>}
       <div className="ml-auto w-fit max-w-full space-y-2 rounded-lg border p-4 text-right text-sm text-muted-foreground">
         <span className="block font-medium text-foreground">Processing status</span>
-        <StatisticsLastUpdated updatedAt={lastDetectedAt} />
+        <StatisticsLastUpdated updatedAt={lastDetectedAt} atUri={lastDetectedPostAtUri} />
         {snapshot
           ? <span className="block"><strong>Jetstream:</strong>{" "}
             {activitySummary(snapshot.monitor.activity, snapshot.observedAt, elapsed,

@@ -473,7 +473,7 @@ monitor's replay cursor lock:
 | `JetstreamReplayProgress` | Complete archive checkpoint or live sequence, service, fallback starting sequence, and update time |
 | `ProcessingActivity` | Separate monitor/backfill/handle-updater run ownership, recorded phase, UTC heartbeat and lifecycle timestamps |
 | `ArchiveReplayActivity` | Ownership-fenced archive progress, generation-stall timestamps, consecutive mismatch count, and scheduled retry time; never used to alter the replay checkpoint |
-| `StatisticsUpdate` | UTC ingestion time of the last new hit, committed atomically with that hit |
+| `StatisticsUpdate` | UTC ingestion time and AT URI of the last new hit, committed atomically with that hit |
 
 `ParentAuthorDid` and the immediate parent's full AT URI come from
 `reply.parent.uri`, not the thread root. The parent URI is stored with a SHA-256
@@ -1089,7 +1089,7 @@ Use the API endpoint from the dashboard (Aspire assigns endpoints at runtime).
 | Method | Path | Result |
 | --- | --- | --- |
 | GET | `/statistics/reply-summary` | All-time `totalReplies`, `rightJerryReplies`, and `wrongJerryReplies` counts |
-| GET | `/statistics/last-updated` | `{ updatedAt }`: UTC ISO timestamp of the last new hit, or null if not yet recorded |
+| GET | `/statistics/last-updated` | `{ updatedAt, atUri }`: UTC ISO timestamp of the last new hit and its matching reply AT URI; either may be null when unavailable |
 | GET | `/statistics/processing-status` | No-store monitor/backfill/handle-updater activity, heartbeat freshness, all-Hits parent-URI counts, and aggregate handle refresh schedule eligibility |
 | GET | `/statistics/right-jerry/top-authors` | Up to ten authors: `did`, nullable current `handle`, and `replyCount` |
 | GET | `/statistics/right-jerry/top-posts` | Up to five resolved correct-Jerry parent posts: `atUri` and recorded `replyCount`; count descending, parent URI ascending for ties |

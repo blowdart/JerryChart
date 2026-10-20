@@ -116,13 +116,18 @@ public sealed class StatisticsStore(MySqlDataSource dataSource, TimeProvider tim
     {
         await using var connection = await dataSource.OpenConnectionAsync(cancellationToken);
         await using var command = connection.CreateCommand();
-        command.CommandText = "SELECT UpdatedAt FROM StatisticsUpdate WHERE Id = 1";
-        var value = await command.ExecuteScalarAsync(cancellationToken);
-        DateTimeOffset? updatedAt = value is DateTime date
-            ? new DateTimeOffset(DateTime.SpecifyKind(date, DateTimeKind.Utc))
-            : null;
+        command.CommandText = "SELECT UpdatedAt, AtUri FROM StatisticsUpdate WHERE Id = 1";
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        if (!await reader.ReadAsync(cancellationToken))
+        {
+            return new StatisticsLastUpdated(null, null);
+        }
 
-        return new StatisticsLastUpdated(updatedAt);
+        DateTime date = reader.GetDateTime(0);
+        DateTimeOffset updatedAt = new(DateTime.SpecifyKind(date, DateTimeKind.Utc));
+        string? atUri = reader.IsDBNull(1) ? null : reader.GetString(1);
+
+        return new StatisticsLastUpdated(updatedAt, atUri);
     }
 
     /// <summary>Gets six UTC monthly counts, including the current month through the present instant.</summary>

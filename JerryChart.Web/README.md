@@ -7,6 +7,8 @@ connection configuration.
 The frontend renders Jerry no summaries, top reply authors, and monthly reply
 charts through server components. `API_BASE_URL` is supplied by Aspire and never exposed to the
 browser. MySQL is accessible only through the .NET API.
+The last-detected timestamp links to the matching reply on Bluesky when its AT
+URI is available.
 
 The top-five posts card opens a ranked dialog of all resolved Jerry posts with
 recorded matching replies. Bluesky post text loads in sequential batches of five,

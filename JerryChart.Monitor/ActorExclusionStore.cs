@@ -40,8 +40,10 @@ internal sealed class ActorExclusionStore(MySqlConnection connection)
         command.CommandText = """
             DELETE FROM ActorRefresh WHERE Did = @did;
             DELETE FROM Actor WHERE Did = @did;
-            INSERT INTO StatisticsUpdate (Id, UpdatedAt) VALUES (1, UTC_TIMESTAMP(6))
-            ON DUPLICATE KEY UPDATE UpdatedAt = GREATEST(UpdatedAt, UTC_TIMESTAMP(6))
+            INSERT INTO StatisticsUpdate (Id, UpdatedAt, AtUri) VALUES (1, UTC_TIMESTAMP(6), NULL)
+            ON DUPLICATE KEY UPDATE
+                AtUri = NULL,
+                UpdatedAt = GREATEST(UpdatedAt, UTC_TIMESTAMP(6))
             """;
         await command.ExecuteNonQueryAsync(cancellationToken);
         await transaction.CommitAsync(cancellationToken);

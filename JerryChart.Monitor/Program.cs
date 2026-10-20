@@ -128,7 +128,11 @@ static async Task<int> ExecuteAsync(CancellationToken cancellationToken)
     if (string.IsNullOrWhiteSpace(apiKey) ||
         !Uri.TryCreate(hostUri, UriKind.Absolute, out Uri? configuredUri) || configuredUri.Scheme != "wss")
     {
-        using ILoggerFactory logs = LoggerFactory.Create(logging => logging.AddConsole());
+        using ILoggerFactory logs = LoggerFactory.Create(logging => logging.AddSimpleConsole(options =>
+        {
+            options.TimestampFormat = "yyyy-MM-dd HH:mm:ss.fff 'UTC' ";
+            options.UseUtcTimestamp = true;
+        }));
         ILogger invalidConfigurationLogger = logs.CreateLogger("JerryChart.Monitor");
         MonitorLog.Started(invalidConfigurationLogger, ThisAssembly.AssemblyInformationalVersion);
         MonitorLog.InvalidConfiguration(invalidConfigurationLogger);
@@ -137,7 +141,7 @@ static async Task<int> ExecuteAsync(CancellationToken cancellationToken)
 
     builder.Services.AddSingleton(services => new MonitorSupervisor(
         token => JetstreamMonitor.RunAsync(services.GetRequiredService<MySqlDataSource>(), apiKey, configuredUri,
-            services.GetRequiredService<ILoggerFactory>().CreateLogger("JerryChart.Monitor"), token),
+            services.GetRequiredService<ILoggerFactory>(), token),
         services.GetRequiredService<IHostApplicationLifetime>(), services.GetRequiredService<ILogger<MonitorSupervisor>>()));
     builder.Services.AddHostedService(services => services.GetRequiredService<MonitorSupervisor>());
     builder.Services.AddHealthChecks().AddCheck<MonitorSupervisor>("monitor-supervisor", tags: ["live"]);

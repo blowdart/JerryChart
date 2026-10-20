@@ -19,14 +19,15 @@ namespace JerryChart.Monitor;
 internal static class JetstreamMonitor
 {
     internal static async Task RunAsync(MySqlDataSource dataSource, string apiKey, Uri service,
-        ILogger logger, CancellationToken cancellationToken)
+        ILoggerFactory loggerFactory, CancellationToken cancellationToken)
     {
+        ILogger logger = loggerFactory.CreateLogger("JerryChart.Monitor");
         ProcessingActivity? lastActivity = null;
         var archiveStall = new ArchiveStallTracker(TimeProvider.System, logger);
         try
         {
             await RetryLoop.RunAsync((progress, token) => RunAttemptAsync(dataSource, apiKey, service,
-                logger, progress, activity => lastActivity = activity, archiveStall, token), logger, cancellationToken,
+                logger, loggerFactory, progress, activity => lastActivity = activity, archiveStall, token), logger, cancellationToken,
                 retrying: token => lastActivity?.ReportArchiveAsync(token) ?? Task.CompletedTask, archiveStall: archiveStall);
         }
         catch (Exception exception) when (!RetryLoop.IsRetryable(exception))
@@ -44,7 +45,7 @@ internal static class JetstreamMonitor
     }
 
     private static async Task RunAttemptAsync(MySqlDataSource dataSource, string apiKey, Uri service,
-        ILogger logger, Action processedEvent, Action<ProcessingActivity> started, ArchiveStallTracker archiveStall,
+        ILogger logger, ILoggerFactory loggerFactory, Action processedEvent, Action<ProcessingActivity> started, ArchiveStallTracker archiveStall,
         CancellationToken cancellationToken)
     {
         // A dedicated physical connection guarantees the advisory lock is released even on cancellation or failure.
@@ -59,7 +60,7 @@ internal static class JetstreamMonitor
         started(activity);
         MonitorLog.JetstreamProcessingStarted(logger);
         await activity.ExecuteAsync(() => RetryLoop.RunAsync(
-            (progress, token) => ReplayAsync(apiKey, service, logger, store, activity, archiveStall, () =>
+            (progress, token) => ReplayAsync(apiKey, service, logger, loggerFactory, store, activity, archiveStall, () =>
             {
                 progress();
                 processedEvent();
@@ -72,7 +73,7 @@ internal static class JetstreamMonitor
             "stopped", cancellationToken, retryable: RetryLoop.IsRetryable);
     }
 
-    private static async Task ReplayAsync(string apiKey, Uri service, ILogger logger, MonitorStore store,
+    private static async Task ReplayAsync(string apiKey, Uri service, ILogger logger, ILoggerFactory loggerFactory, MonitorStore store,
         ProcessingActivity activity, ArchiveStallTracker archiveStall, Action processedEvent, CancellationToken cancellationToken)
     {
         // Every retry reloads durable progress and starts a new snapshot enumeration, allowing fresh archive planning
@@ -87,16 +88,7 @@ internal static class JetstreamMonitor
 
         MonitorLog.StartingReplay(logger, saved is not null);
         await activity.ReportArchiveAsync(cancellationToken, attemptStarted: true);
-        // The SDK must own its HTTP client: this version rejects cross-origin archive redirects when given an
-        // external factory, including the archive's HTTPS CDN redirect. Its owned client already uses
-        // idunno.Security.Ssrf for HTTP and WebSocket connections, with automatic redirects disabled.
-        // This preserves manual SDK redirect validation and SSRF checks on the CDN connection; do not replace
-        // it with an external factory or enable automatic redirects to work around the archive policy.
-        await using var jetstream = new AtProtoJetstream(uri: service, options: new JetstreamOptions
-        {
-            ApiKey = apiKey,
-            MaximumConcurrentMessageParsers = 1
-        }, collections: [new CollectionSelector(CollectionNsid.Post)]);
+        await using AtProtoJetstream jetstream = CreateJetstream(apiKey, service, loggerFactory);
         jetstream.KindFilter = [JetStreamEventKind.Commit];
 
         var request = new SnapshotRequest
@@ -226,6 +218,18 @@ internal static class JetstreamMonitor
             SaveArchiveRecovery(progress, store, logger);
             throw;
         }
+    }
+
+    internal static AtProtoJetstream CreateJetstream(string apiKey, Uri service, ILoggerFactory loggerFactory)
+    {
+        // The SDK must own its HTTP client: an external factory prevents validated cross-origin CDN redirects.
+        // Its owned HTTP and WebSocket transports retain SSRF checks and disable automatic redirects.
+        return new AtProtoJetstream(uri: service, options: new JetstreamOptions
+        {
+            ApiKey = apiKey,
+            LoggerFactory = loggerFactory,
+            MaximumConcurrentMessageParsers = 1
+        }, collections: [new CollectionSelector(CollectionNsid.Post)]);
     }
 
     internal static async Task<bool> ReadNextLiveAsync(IAsyncEnumerator<JetstreamEvent> events)

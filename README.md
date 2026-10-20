@@ -203,11 +203,11 @@ need to be installed separately: Aspire starts it in Docker.
 For `aspire run`, install the CLI after installing .NET:
 
 ```powershell
-dotnet tool install --global Aspire.Cli --version 13.6.0
+dotnet tool install --global Aspire.Cli --version 13.6.2
 ```
 
 If already installed, use `dotnet tool update --global Aspire.Cli --version
-13.6.0`, or keep a compatible newer version. No separate Aspire workload is
+13.6.2`, or keep a compatible newer version. No separate Aspire workload is
 required. Verify the tools before starting:
 
 ```powershell

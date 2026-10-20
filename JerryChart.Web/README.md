@@ -22,6 +22,12 @@ and is removed on close, so reopening asks Bluesky again rather than using a
 JerryChart content cache. Link navigation and the timestamp remain unchanged.
 The preview has a close button, supports Escape outside the cross-origin iframe,
 and retains a direct link if the embed is blocked or unavailable.
+It uses a nonmodal Base UI Popover with managed portal tab order rather than
+PreviewCard, whose content is not keyboard-navigable. Opening leaves focus on
+the timestamp; Tab enters the close button, scroll region, embedded document,
+and direct link, then continues to the next page control. Shift+Tab reverses
+that order. Closing restores focus without reopening the popup, and Enter or
+click on the timestamp still navigates to the post.
 Image posts resize as Bluesky loads their media. Tall previews scroll within a
 viewport-bounded, keyboard-focusable region instead of growing over the page;
 the close button and direct link stay outside that region. On very narrow
@@ -110,7 +116,15 @@ npm ci
 npm run lint
 npm run typecheck
 npm run build
+npm run test:browser
 ```
+
+The real-component browser regression uses Playwright with an isolated local
+fixture and intercepted Bluesky responses, not the running Aspire application
+or external post content. On Windows it uses installed Microsoft Edge by default;
+elsewhere run `npx playwright install --with-deps chromium` first. Set
+`BROWSER_CHANNEL` to choose another installed browser channel. CI runs this
+regression with Chromium and retains its JUnit results alongside the Node tests.
 
 For standalone development, set `API_BASE_URL` to the API's HTTP endpoint, then
 run `npm run dev`. Existing generated components and `components.json` are

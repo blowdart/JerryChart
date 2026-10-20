@@ -210,8 +210,8 @@ function replyPreviewHarness() {
   };
   const { PostHoverCard } = loadModule("components\\post-hover-card.tsx", {
     react: hooks,
-    "@base-ui/react/preview-card": {
-      PreviewCard: { Root: "section", Trigger: "a", Portal: React.Fragment, Positioner: "div", Popup: "aside" },
+    "@base-ui/react/popover": {
+      Popover: { Root: "section", Trigger: "a", Portal: React.Fragment, Positioner: "div", Popup: "aside" },
     },
   });
   function find(node, type) {
@@ -224,8 +224,11 @@ function replyPreviewHarness() {
     get focused() { return focused; },
     render(atUri = "at://did:plc:erlxz4sppc5uv7m4efmcvpsf/app.bsky.feed.post/3my5n4tyxfcud") {
       stateIndex = refIndex = effectIndex = 0;
-      const tree = PostHoverCard({ atUri, children: "timestamp" });
-      find(tree, "a").props.ref.current = { focus() { focused++; } };
+      const raw = PostHoverCard({ atUri, children: "timestamp" });
+      const tree = React.cloneElement(raw, {
+        onOpenChange: (next) => raw.props.onOpenChange(next, { reason: "none" }),
+      });
+      find(tree, "a").props.render.props.ref.current = { focus() { focused++; } };
       const iframe = find(tree, "iframe");
       if (iframe) iframe.props.ref.current = { contentWindow: source };
       return tree;
@@ -244,7 +247,7 @@ test("reply preview loads only the official privacy-enforcing iframe on demand a
   try {
     let tree = harness.render();
     const link = harness.find(tree, "a");
-    assert.equal(link.props.href,
+    assert.equal(link.props.render.props.href,
       "https://bsky.app/profile/did:plc:erlxz4sppc5uv7m4efmcvpsf/post/3my5n4tyxfcud");
     assert.equal(harness.find(tree, "iframe"), undefined);
     assert.equal(harness.timers.size, 0);

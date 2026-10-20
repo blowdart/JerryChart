@@ -1,6 +1,6 @@
 "use client";
 
-import { PreviewCard } from "@base-ui/react/preview-card";
+import { Popover } from "@base-ui/react/popover";
 import { useEffect, useId, useRef, useState, type ReactNode } from "react";
 import { X } from "lucide-react";
 import { blueskyPostUrl } from "@/lib/reply-posts";
@@ -11,6 +11,7 @@ export function PostHoverCard({ atUri, children }: { atUri: string; children: Re
   const trigger = useRef<HTMLAnchorElement>(null);
   const frame = useRef<HTMLIFrameElement>(null);
   const loadTimeout = useRef<number | undefined>(undefined);
+  const suppressFocusOpen = useRef(false);
   const [open, setOpen] = useState(false);
   const [height, setHeight] = useState(400);
   const [loading, setLoading] = useState(true);
@@ -43,26 +44,47 @@ export function PostHoverCard({ atUri, children }: { atUri: string; children: Re
   }, [open, id]);
 
   return (
-    <PreviewCard.Root open={open} onOpenChange={(next) => {
+    <Popover.Root open={open} triggerId={id} onOpenChange={(next, details) => {
+      if (details.reason === "trigger-press") {
+        details.cancel();
+        return;
+      }
       if (next) {
         setHeight(400);
         setLoading(true);
         setFailed(false);
+      } else if (details.reason === "escape-key" || details.reason === "close-press") {
+        suppressFocusOpen.current = true;
       }
       setOpen(next);
     }}>
-      <PreviewCard.Trigger ref={trigger} href={href} className="underline underline-offset-4">
+      <Popover.Trigger id={id} nativeButton={false} openOnHover
+        render={<a ref={trigger} href={href} />} role="link" className="underline underline-offset-4"
+        onClick={(event) => event.preventBaseUIHandler()}
+        onKeyDown={(event) => {
+          if (event.key === " ") event.preventBaseUIHandler();
+        }}
+        onFocus={() => {
+          if (!open && !suppressFocusOpen.current) {
+            setHeight(400);
+            setLoading(true);
+            setFailed(false);
+            setOpen(true);
+          }
+        }}
+        onBlur={() => { suppressFocusOpen.current = false; }}>
         {children}
-      </PreviewCard.Trigger>
+      </Popover.Trigger>
       {open && (
-        <PreviewCard.Portal>
-          <PreviewCard.Positioner sideOffset={8} positionMethod="fixed" className="z-50 max-w-[var(--available-width)]">
-            <PreviewCard.Popup aria-label="Matching reply preview" className="flex max-h-[var(--available-height)] w-[400px] max-w-[calc(100vw_-_2rem)] flex-col rounded-xl border bg-background p-3 text-left text-sm font-normal text-foreground shadow-xl">
+        <Popover.Portal>
+          <Popover.Positioner sideOffset={8} positionMethod="fixed" className="z-50 max-w-[var(--available-width)]">
+            <Popover.Popup initialFocus={false} aria-label="Matching reply preview" className="flex max-h-[var(--available-height)] w-[400px] max-w-[calc(100vw_-_2rem)] flex-col rounded-xl border bg-background p-3 text-left text-sm font-normal text-foreground shadow-xl">
               <div className="mb-2 flex shrink-0 items-center justify-between gap-3">
                 <span>Bluesky reply preview</span>
                 <button type="button" aria-label="Close reply preview" title="Close reply preview"
                   className="flex size-8 shrink-0 cursor-pointer items-center justify-center rounded border hover:bg-muted focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-foreground"
                   onClick={() => {
+                    suppressFocusOpen.current = true;
                     setOpen(false);
                     trigger.current?.focus();
                   }}>
@@ -88,10 +110,10 @@ export function PostHoverCard({ atUri, children }: { atUri: string; children: Re
                 />
               </div>
               <a href={href} className="mt-2 inline-block shrink-0 underline underline-offset-4">View the reply on Bluesky</a>
-            </PreviewCard.Popup>
-          </PreviewCard.Positioner>
-        </PreviewCard.Portal>
+            </Popover.Popup>
+          </Popover.Positioner>
+        </Popover.Portal>
       )}
-    </PreviewCard.Root>
+    </Popover.Root>
   );
 }

@@ -27,6 +27,9 @@ export function PostHoverCard({ atUri, children }: { atUri: string; children: Re
         !("height" in data) || typeof data.height !== "number" ||
         !Number.isFinite(data.height) || data.height <= 0 || data.height > 10000) return;
       setHeight(Math.ceil(data.height));
+      window.clearTimeout(loadTimeout.current);
+      setLoading(false);
+      setFailed(false);
     }
     window.addEventListener("message", resize);
     loadTimeout.current = window.setTimeout(() => {
@@ -77,11 +80,6 @@ export function PostHoverCard({ atUri, children }: { atUri: string; children: Re
                   height={height}
                   referrerPolicy="no-referrer"
                   sandbox="allow-scripts allow-same-origin allow-popups allow-popups-to-escape-sandbox"
-                  onLoad={() => {
-                    window.clearTimeout(loadTimeout.current);
-                    setLoading(false);
-                    setFailed(false);
-                  }}
                   onError={() => {
                     window.clearTimeout(loadTimeout.current);
                     setLoading(false);

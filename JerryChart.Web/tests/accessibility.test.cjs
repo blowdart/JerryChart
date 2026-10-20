@@ -283,6 +283,8 @@ test("reply preview loads only the official privacy-enforcing iframe on demand a
     tree.props.onOpenChange(true);
     tree = harness.render();
     assert.equal(harness.find(tree, "iframe").props.height, 400);
+    assert.equal(harness.find(tree, "p").props.role, "status");
+    assert.equal(harness.timers.size, 1);
     assert.ok(harness.find(tree, "iframe"));
     // Base UI routes keyboard Escape and pointer dismissal through this callback.
     tree.props.onOpenChange(false);
@@ -346,6 +348,8 @@ test("reply preview ignores forged resize messages and rejects unsafe AT URIs", 
     resize(valid);
     tree = harness.render();
     assert.equal(harness.find(tree, "iframe").props.height, 233);
+    assert.equal(harness.find(tree, "p"), undefined);
+    assert.equal(harness.timers.size, 0);
     harness.find(tree, "iframe").props.ref.current = null;
     resize(valid);
     for (const uri of [
@@ -367,12 +371,22 @@ test("reply preview reports load failures, retains navigation, clears timeouts a
     assert.equal(harness.find(tree, "p").props.role, "status");
     const timer = [...harness.timers.values()][0];
     assert.equal(timer.delay, 15000);
+    harness.find(tree, "iframe").props.onLoad?.();
+    tree = harness.render();
+    assert.equal(harness.find(tree, "p").props.role, "status");
+    assert.equal(harness.timers.size, 1,
+      "An iframe load event is not evidence that the embed has rendered.");
     timer.callback();
     tree = harness.render();
     assert.equal(harness.find(tree, "p").props.role, "alert");
     assert.match(harness.find(tree, "p").props.children, /Unable to load/);
     assert.match(harness.find(tree, "aside").props.children.at(-1).props.href, /^https:\/\/bsky\.app\//);
-    harness.find(tree, "iframe").props.onLoad();
+    harness.find(tree, "iframe").props.onLoad?.();
+    assert.equal(harness.find(harness.render(), "p").props.role, "alert");
+    harness.listeners.get("message")({
+      origin: "https://embed.bsky.app", source: harness.source,
+      data: { id: "reply-preview-id", height: 250 },
+    });
     tree = harness.render();
     assert.equal(harness.find(tree, "p"), undefined);
     assert.equal(harness.timers.size, 0);

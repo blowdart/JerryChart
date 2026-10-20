@@ -55,6 +55,10 @@ The iframe uses `no-referrer` and does not pass the optional referring-page
 parameter. Resize messages must match its origin, source window, and instance
 ID; heights are finite and bounded. Opening it still sends the visitor's IP
 address and requested post to Bluesky; see the site's privacy policy.
+Loading completes only after a validated resize message confirms that the
+embed rendered, including its privacy notice. An iframe `load` event alone
+does not cancel the timeout; a blocked or uninitialized embed reports a failure
+after 15 seconds while preserving the direct link.
 
 The top-five posts card opens a ranked dialog of all resolved Jerry posts with
 recorded matching replies. Bluesky post text loads in sequential batches of five,

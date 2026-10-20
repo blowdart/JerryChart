@@ -1,5 +1,4 @@
 import Image from "next/image";
-import { RefreshStatistics } from "@/components/refresh-statistics";
 import { ProcessingStatus } from "@/components/processing-status";
 import { ProfileHoverCard } from "@/components/profile-hover-card";
 import {
@@ -18,7 +17,6 @@ import {
 } from "@/components/ui/table";
 import { ReplyHistoryDialog } from "@/components/reply-history-dialog";
 import { ReplyAuthorsDialog } from "@/components/reply-authors-dialog";
-import { StatisticsLastUpdated } from "@/components/statistics-last-updated";
 import { TopReplyPosts } from "@/components/top-reply-posts";
 import { getInitialProcessingStatus, getMonthlyRightJerryReplies, getReplySummary, getStatisticsLastUpdated, getTopRightJerryAuthors, getTopRightJerryPosts } from "@/lib/api";
 import { rightJerryDid } from "@/lib/reply-posts";
@@ -107,9 +105,7 @@ export default async function Home() {
       </Card>
       </div>
       <footer className="space-y-1 border-t pt-6 text-right text-sm text-muted-foreground">
-        <RefreshStatistics />
-        <StatisticsLastUpdated updatedAt={lastUpdated} />
-        <ProcessingStatus initial={processingStatus} />
+        <ProcessingStatus initial={processingStatus} lastDetectedAt={lastUpdated} />
       </footer>
     </main>
   );

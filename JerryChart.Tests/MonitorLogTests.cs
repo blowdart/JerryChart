@@ -57,6 +57,21 @@ public sealed class MonitorLogTests
             logger.Fields["{OriginalFormat}"]);
     }
 
+    /// <summary>Verifies the startup version is emitted as a structured information log.</summary>
+    [TestMethod]
+    public void StartedLogsInformationalVersion()
+    {
+        var logger = new RecordingLogger();
+
+        MonitorLog.Started(logger, "1.0.0+f6fde58037");
+
+        Assert.AreEqual(LogLevel.Information, logger.Level);
+        Assert.AreEqual(49, logger.EventId.Id);
+        Assert.AreEqual("1.0.0+f6fde58037", logger.Fields["Version"]);
+        Assert.AreEqual("JerryChart Monitor version {Version}.", logger.Fields["{OriginalFormat}"]);
+        Assert.AreEqual("JerryChart Monitor version 1.0.0+f6fde58037.", logger.Message);
+    }
+
     /// <summary>Verifies transport retry warnings omit exceptions while debug logs retain diagnostics.</summary>
     [TestMethod]
     public void LiveRecoveryLogsDistinguishRetryOwnershipAndDiagnostics()

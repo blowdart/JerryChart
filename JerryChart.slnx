@@ -36,6 +36,7 @@
     <File Path="LICENSE" />
     <File Path="nuget.config" />
     <File Path="README.md" />
+    <File Path="version.json" />
     <File Path="SECURITY.md" />
   </Folder>
   <Project Path="JerryChart.Api/JerryChart.Api.csproj" />

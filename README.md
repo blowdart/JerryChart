@@ -14,6 +14,12 @@ Tailwind CSS. Historical replay resumes from durable checkpoints before
 switching to live Jetstream monitoring. Statistics reflect data recorded so
 far, not necessarily complete historical coverage.
 
+The .NET API, monitor, and AppHost use Nerdbank.GitVersioning with a `1.0`
+base version and print their assembly version at startup. The frontend image
+embeds its source commit SHA during the Docker build and links that build
+identity from the footer; local builds without a valid SHA display
+“Development build”.
+
 | Project | Role |
 | --- | --- |
 | `JerryChart.AppHost` | Orchestrates MySQL, the API, CLI, and frontend |
@@ -32,10 +38,19 @@ All three containers run as non-root users and listen on port 8080.
 These are framework-dependent .NET deployments, not native AOT publishes.
 
 ```powershell
+git clone --bare --no-hardlinks . .docker-git
 docker build --target api -t jerrychart-api:local .
 docker build --target monitor -t jerrychart-monitor:local .
 docker build -f JerryChart.Web\Dockerfile -t jerrychart-web:local .
 ```
+
+Use a full-history Git checkout. The bare clone supplies self-contained Git
+metadata to the backend build stage, including when building from a worktree
+whose `.git` file points outside the Docker context. Recreate `.docker-git`
+before building a different commit. Missing metadata fails the Docker build
+rather than silently stamping every release `1.0.0`. Only publish output enters
+the runtime images; Git data stays in the build stage. The release workflow
+prepares this metadata from its verified source checkout.
 
 Production images are intended for the existing DigitalOcean Container Registry,
 using separate `jerrychart-api`, `jerrychart-monitor`, and `jerrychart-web`

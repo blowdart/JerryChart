@@ -1,6 +1,8 @@
 # syntax=docker/dockerfile:1
 FROM node:26-bookworm-slim AS build
 WORKDIR /app
+ARG GITHUB_SHA
+ENV NEXT_PUBLIC_BUILD_COMMIT=${GITHUB_SHA}
 ENV NEXT_TELEMETRY_DISABLED=1
 COPY JerryChart.Web/package.json JerryChart.Web/package-lock.json ./
 COPY JerryChart.Web/tooling/lint/package.json JerryChart.Web/tooling/lint/package-lock.json ./tooling/lint/

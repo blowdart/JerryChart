@@ -2,6 +2,7 @@
 
   <ItemGroup>
     <PackageReference Include="Microsoft.Extensions.Telemetry.Abstractions" />
+    <PackageReference Include="Nerdbank.GitVersioning" />
     <ProjectReference Include="..\JerryChart.Data\JerryChart.Data.csproj" />
     <ProjectReference Include="..\JerryChart.ServiceDefaults\JerryChart.ServiceDefaults.csproj" />
   </ItemGroup>

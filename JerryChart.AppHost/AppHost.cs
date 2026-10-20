@@ -1,6 +1,11 @@
 // Copyright (c) Barry Dorrans. All rights reserved.
 // Licensed under the MIT License.
 
+using JerryChart.AppHost;
+
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
+
 IDistributedApplicationBuilder builder = DistributedApplication.CreateBuilder(args);
 
 IResourceBuilder<ParameterResource> mysqlPassword = builder.AddParameter("mysql-password", secret: true);
@@ -35,4 +40,7 @@ builder.AddJavaScriptApp("web", Path.Combine("..", "JerryChart.Web"))
     .WaitFor(api)
     .WithExternalHttpEndpoints();
 
-await builder.Build().RunAsync();
+await using DistributedApplication app = builder.Build();
+AppHostLog.Started(app.Services.GetRequiredService<ILoggerFactory>()
+    .CreateLogger("JerryChart.AppHost"), ThisAssembly.AssemblyInformationalVersion);
+await app.RunAsync();

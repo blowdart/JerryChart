@@ -5,6 +5,8 @@ import { Maximize2, X } from "lucide-react";
 import { useEffect, useId, useRef, useState } from "react";
 import { activityMessage, activityOutcome, activitySummary, isProcessingStatus, replayThroughputMessage, type ProcessingStatus as Status } from "@/lib/processing-status";
 import { LocalizedTime } from "@/components/localized-time";
+import { StatisticsLastUpdated } from "@/components/statistics-last-updated";
+import { RefreshStatistics } from "@/components/refresh-statistics";
 
 interface InitialStatus {
   status: Status | null;
@@ -16,7 +18,10 @@ type RefreshDisplay =
   | { kind: "refreshing" }
   | { kind: "paused" };
 
-export function ProcessingStatus({ initial }: { initial: InitialStatus }) {
+export function ProcessingStatus({ initial, lastDetectedAt = null }: {
+  initial: InitialStatus;
+  lastDetectedAt?: string | null;
+}) {
   const [snapshot, setSnapshot] = useState(initial.status);
   const [error, setError] = useState(initial.error);
   const [elapsed, setElapsed] = useState(0);
@@ -142,27 +147,27 @@ export function ProcessingStatus({ initial }: { initial: InitialStatus }) {
   return (
     <>
       {error && <p role="alert">{error}</p>}
-      <button
-        type="button"
-        aria-haspopup="dialog"
-        aria-label="Processing status details"
-        title="Processing status details"
-        className="ml-auto block w-fit max-w-full rounded-lg text-right focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-foreground"
-        onClick={() => detailsDialog.current?.showModal()}
-      >
-        <span className="block space-y-2 rounded-lg border p-4 text-sm text-muted-foreground">
-          <span className="block font-medium text-foreground">Processing status</span>
-          {snapshot
-            ? <span className="block"><strong>Jetstream:</strong>{" "}
-              {activitySummary(snapshot.monitor.activity, snapshot.observedAt, elapsed,
-                snapshot.monitor.archiveReplay, snapshot.monitor.lastLiveEventAt)}
-            </span>
-            : !error && <span className="block">Worker activity is unknown.</span>}
-          <span className="flex items-center justify-end gap-1 text-xs underline underline-offset-4">
-            View detailed status <Maximize2 aria-hidden="true" className="size-4" />
+      <div className="ml-auto w-fit max-w-full space-y-2 rounded-lg border p-4 text-right text-sm text-muted-foreground">
+        <span className="block font-medium text-foreground">Processing status</span>
+        <StatisticsLastUpdated updatedAt={lastDetectedAt} />
+        {snapshot
+          ? <span className="block"><strong>Jetstream:</strong>{" "}
+            {activitySummary(snapshot.monitor.activity, snapshot.observedAt, elapsed,
+              snapshot.monitor.archiveReplay, snapshot.monitor.lastLiveEventAt)}
           </span>
-        </span>
-      </button>
+          : !error && <span className="block">Worker activity is unknown.</span>}
+        <RefreshStatistics />
+        <button
+          type="button"
+          aria-haspopup="dialog"
+          aria-label="Processing status details"
+          title="Processing status details"
+          className="ml-auto flex items-center justify-end gap-1 rounded text-xs underline underline-offset-4 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-foreground"
+          onClick={() => detailsDialog.current?.showModal()}
+        >
+          View detailed status <Maximize2 aria-hidden="true" className="size-4" />
+        </button>
+      </div>
       <dialog
         ref={detailsDialog}
         aria-labelledby={detailsTitleId}
@@ -192,7 +197,6 @@ export function ProcessingStatus({ initial }: { initial: InitialStatus }) {
               </p>
               {snapshot.monitor.lastLiveEventAt && <p>
                 Last saved live-stream event time: <LocalizedTime timestamp={snapshot.monitor.lastLiveEventAt} />.
-                {" "}This measures stream ingestion, not the post creation time or heartbeat.
               </p>}
               {throughput && <p title="Average since this replay attempt began, including download, decompression, parsing, processing, checkpoint and active waits; not individual event latency.">{throughput}</p>}
               {snapshot.monitor.archiveReplay && <>

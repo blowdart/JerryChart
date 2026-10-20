@@ -39,6 +39,7 @@ static async Task<int> ExecuteOperatorJobAsync(Func<OperatorJobs, CancellationTo
     using var configuration = new MonitorHostBuilder();
     using IHost host = configuration.Builder.Build();
     ILogger logger = host.Services.GetRequiredService<ILoggerFactory>().CreateLogger("JerryChart.Monitor");
+    MonitorLog.Started(logger, ThisAssembly.AssemblyInformationalVersion);
     string? connectionString = configuration.Builder.Configuration["ConnectionStrings:jerrychart"];
     if (string.IsNullOrWhiteSpace(connectionString))
     {
@@ -74,6 +75,7 @@ static async Task<int> ExecuteExclusionAsync(Did did, CancellationToken cancella
     using var configuration = new MonitorHostBuilder();
     using IHost host = configuration.Builder.Build();
     ILogger logger = host.Services.GetRequiredService<ILoggerFactory>().CreateLogger("JerryChart.Monitor");
+    MonitorLog.Started(logger, ThisAssembly.AssemblyInformationalVersion);
     string? connectionString = configuration.Builder.Configuration["ConnectionStrings:jerrychart"];
     if (string.IsNullOrWhiteSpace(connectionString))
     {
@@ -127,7 +129,9 @@ static async Task<int> ExecuteAsync(CancellationToken cancellationToken)
         !Uri.TryCreate(hostUri, UriKind.Absolute, out Uri? configuredUri) || configuredUri.Scheme != "wss")
     {
         using ILoggerFactory logs = LoggerFactory.Create(logging => logging.AddConsole());
-        MonitorLog.InvalidConfiguration(logs.CreateLogger("JerryChart.Monitor"));
+        ILogger invalidConfigurationLogger = logs.CreateLogger("JerryChart.Monitor");
+        MonitorLog.Started(invalidConfigurationLogger, ThisAssembly.AssemblyInformationalVersion);
+        MonitorLog.InvalidConfiguration(invalidConfigurationLogger);
         return 2;
     }
 
@@ -140,6 +144,7 @@ static async Task<int> ExecuteAsync(CancellationToken cancellationToken)
     await using WebApplication host = builder.Build();
     host.MapDefaultEndpoints();
     ILogger logger = host.Services.GetRequiredService<ILoggerFactory>().CreateLogger("JerryChart.Monitor");
+    MonitorLog.Started(logger, ThisAssembly.AssemblyInformationalVersion);
     IHostApplicationLifetime lifetime = host.Services.GetRequiredService<IHostApplicationLifetime>();
     using CancellationTokenRegistration cancellationRegistration = cancellationToken.Register(lifetime.StopApplication);
     using var shutdown = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, lifetime.ApplicationStopping);
@@ -184,6 +189,7 @@ static async Task<int> ExecuteParentUriBackfillAsync(CancellationToken cancellat
             .AddSsrfHandlerMetrics());
     using IHost host = builder.Build();
     ILogger logger = host.Services.GetRequiredService<ILoggerFactory>().CreateLogger("JerryChart.Monitor");
+    MonitorLog.Started(logger, ThisAssembly.AssemblyInformationalVersion);
     string? connectionString = builder.Configuration["ConnectionStrings:jerrychart"];
     if (string.IsNullOrWhiteSpace(connectionString))
     {

@@ -16,6 +16,7 @@ builder.Services.ConfigureHttpJsonOptions(options =>
     options.SerializerOptions.TypeInfoResolverChain.Insert(0, ApiJsonContext.Default));
 
 WebApplication app = builder.Build();
+ApiLog.Started(app.Logger, ThisAssembly.AssemblyInformationalVersion);
 app.UseExceptionHandler();
 app.MapDefaultEndpoints();
 

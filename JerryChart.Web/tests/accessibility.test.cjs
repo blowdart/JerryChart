@@ -74,6 +74,77 @@ test("home page explains deleted-reply retention between top posts and history/u
   assert.match(tables, /Top 10 users/);
 });
 
+test("root footer links the embedded build commit or identifies a development build", () => {
+  const originalSha = process.env.NEXT_PUBLIC_BUILD_COMMIT;
+  const sha = "f6fde58037effd58d8c2791e0852d327394c7d53";
+  try {
+    process.env.NEXT_PUBLIC_BUILD_COMMIT = sha;
+    const loadLayout = () => loadModule("app\\layout.tsx", {
+      "next/font/google": {
+        Geist: () => ({ variable: "font-sans" }),
+        Geist_Mono: () => ({ variable: "font-mono" }),
+      },
+      "next/link": ({ href, children, ...props }) => React.createElement("a", { href, ...props }, children),
+      "./globals.css": {},
+    }).default;
+    const commitLayout = loadLayout();
+    const commitMarkup = renderToStaticMarkup(React.createElement(commitLayout, { children: "Page content" }));
+    assert.match(commitMarkup, new RegExp(`href="https://github\\.com/blowdart/JerryChart/commit/${sha}"`));
+    assert.match(commitMarkup, /Build f6fde58/);
+    assert.ok(commitMarkup.indexOf('aria-label="Legal"') < commitMarkup.indexOf("Get the source code on GitHub"));
+    assert.ok(commitMarkup.indexOf("Get the source code on GitHub") < commitMarkup.indexOf("Build f6fde58"));
+
+    delete process.env.NEXT_PUBLIC_BUILD_COMMIT;
+    const developmentLayout = loadLayout();
+    const developmentMarkup = renderToStaticMarkup(
+      React.createElement(developmentLayout, { children: "Page content" }),
+    );
+    assert.match(developmentMarkup, /Development build/);
+    assert.doesNotMatch(developmentMarkup, /JerryChart\/commit\//);
+  } finally {
+    if (originalSha === undefined) {
+      delete process.env.NEXT_PUBLIC_BUILD_COMMIT;
+    } else {
+      process.env.NEXT_PUBLIC_BUILD_COMMIT = originalSha;
+    }
+  }
+});
+
+test("processing status places the last detection directly below its heading", () => {
+  const hooks = {
+    ...React,
+    useEffect() {},
+    useId() { return "processing-status-title"; },
+    useRef() { return { current: null }; },
+    useState(initial) { return [initial, () => {}]; },
+  };
+  const RefreshStatistics = () => React.createElement("button", { type: "button" }, "Refresh");
+  const { ProcessingStatus } = loadModule("components\\processing-status.tsx", {
+    react: hooks,
+    "@/components/refresh-statistics": { RefreshStatistics },
+  });
+  for (const lastDetectedAt of [null, "2026-10-19T12:00:00Z"]) {
+    const tree = ProcessingStatus({ initial: { status: null, error: null }, lastDetectedAt });
+    const box = React.Children.toArray(tree.props.children).find(child => child.type === "div");
+    const content = React.Children.toArray(box.props.children);
+    assert.equal(content[0].props.children, "Processing status");
+    assert.equal(content[1].props.updatedAt, lastDetectedAt);
+    const refreshIndex = content.findIndex(child => child.type === RefreshStatistics);
+    assert.ok(refreshIndex > 1);
+    assert.equal(content[refreshIndex + 1].type, "button");
+    assert.equal(content[refreshIndex + 1].props["aria-label"], "Processing status details");
+    const markup = renderToStaticMarkup(box);
+    assert.doesNotMatch(markup, /<button\b[^>]*>[\s\S]*<button\b[\s\S]*<\/button>[\s\S]*<\/button>/);
+    assert.match(markup, /<strong>&quot;Jerry No&quot;<\/strong> last detected:/);
+    assert.doesNotMatch(markup, /<p\b/);
+    if (lastDetectedAt === null) {
+      assert.match(markup, /not yet recorded/);
+    } else {
+      assert.match(markup, /dateTime="2026-10-19T12:00:00Z"/i);
+    }
+  }
+});
+
 test("detail dialogs expose icon-only close buttons with accessible names, tooltips and focus indicators", () => {
   let closed = 0;
   const hooks = {

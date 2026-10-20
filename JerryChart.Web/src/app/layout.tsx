@@ -13,6 +13,9 @@ const geistMono = Geist_Mono({
   subsets: ["latin"],
 });
 
+const buildCommit = process.env.NEXT_PUBLIC_BUILD_COMMIT;
+const isBuildCommit = buildCommit !== undefined && /^[a-f0-9]{40}$/i.test(buildCommit);
+
 export const metadata: Metadata = {
   metadataBase: process.env.SITE_URL ? new URL(process.env.SITE_URL) : undefined,
   title: "Jerry No",
@@ -55,15 +58,27 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
               Aspire
             </a>
           </p>
+          <nav aria-label="Legal" className="mb-2 flex flex-wrap justify-end gap-x-4 gap-y-2">
+            <Link href="/terms" className="underline underline-offset-4">Terms of use</Link>
+            <Link href="/privacy" className="underline underline-offset-4">Privacy policy</Link>
+          </nav>
           <p className="mb-2">
             <a href="https://github.com/blowdart/JerryChart" className="underline underline-offset-4">
               Get the source code on GitHub
             </a>
           </p>
-          <nav aria-label="Legal" className="flex flex-wrap justify-end gap-x-4 gap-y-2">
-            <Link href="/terms" className="underline underline-offset-4">Terms of use</Link>
-            <Link href="/privacy" className="underline underline-offset-4">Privacy policy</Link>
-          </nav>
+          <p className="mb-2">
+            {isBuildCommit ? (
+              <a
+                href={`https://github.com/blowdart/JerryChart/commit/${buildCommit}`}
+                className="underline underline-offset-4"
+              >
+                Build {buildCommit.slice(0, 7)}
+              </a>
+            ) : (
+              "Development build"
+            )}
+          </p>
         </footer>
       </body>
     </html>

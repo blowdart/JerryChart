@@ -9,6 +9,9 @@ namespace JerryChart.Monitor;
 
 internal static partial class MonitorLog
 {
+    [LoggerMessage(49, LogLevel.Information, "JerryChart Monitor version {Version}.")]
+    internal static partial void Started(ILogger logger, string version);
+
     [LoggerMessage(42, LogLevel.Error, "Operator commands require ConnectionStrings__jerrychart.")]
     internal static partial void MissingOperatorConnectionString(ILogger logger);
 

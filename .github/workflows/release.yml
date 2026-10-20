@@ -46,6 +46,7 @@ jobs:
       - name: Check out verified source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          fetch-depth: 0
           persist-credentials: false
 
       - name: Build and export images
@@ -53,6 +54,7 @@ jobs:
         run: |
           set -euo pipefail
           tag="$GITHUB_SHA-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
+          git clone --bare --no-hardlinks . .docker-git
           docker build --target api -t "$REGISTRY/jerrychart-api:$tag" .
           docker build --target monitor -t "$REGISTRY/jerrychart-monitor:$tag" .
           docker build --build-arg GITHUB_SHA="$GITHUB_SHA" \

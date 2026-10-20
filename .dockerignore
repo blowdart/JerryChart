@@ -4,6 +4,8 @@
 !Directory.Packages.props
 !nuget.config
 !version.json
+!.docker-git/
+!.docker-git/**
 !JerryChart.Api/
 !JerryChart.Api/**
 !JerryChart.Data/

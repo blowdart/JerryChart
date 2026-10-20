@@ -6,6 +6,9 @@
 # dotenv files
 .env
 
+# Git metadata prepared for backend Docker builds
+.docker-git/
+
 # User-specific files
 *.rsuser
 *.suo

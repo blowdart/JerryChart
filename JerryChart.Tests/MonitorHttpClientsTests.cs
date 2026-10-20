@@ -9,6 +9,8 @@ using idunno.Security;
 
 using JerryChart.Monitor;
 
+using Microsoft.Extensions.Logging;
+
 namespace JerryChart.Tests;
 
 /// <summary>Verifies monitor HTTP transports retain SSRF protection.</summary>
@@ -17,6 +19,21 @@ public sealed class MonitorHttpClientsTests
 {
     /// <summary>Gets or sets the context for the current test.</summary>
     public TestContext TestContext { get; set; } = null!;
+
+    /// <summary>Verifies the monitor routes SDK diagnostics through the host logger factory.</summary>
+    /// <returns>A task representing SDK construction and disposal.</returns>
+    [TestMethod]
+    public async Task MonitorJetstreamUsesHostLoggerFactory()
+    {
+        var provider = new RecordingLoggerProvider();
+        using ILoggerFactory factory = LoggerFactory.Create(logging =>
+            logging.SetMinimumLevel(LogLevel.Debug).AddProvider(provider));
+        await using AtProtoJetstream jetstream = JetstreamMonitor.CreateJetstream(
+            "test-api-key", new Uri("wss://jetstream.us-west.bsky.network"), factory);
+
+        Assert.Contains("idunno.AtProto.Jetstream.AtProtoJetstream", provider.Categories);
+        Assert.Contains("WSS: WebSocket created", provider.Messages);
+    }
 
     /// <summary>Verifies the handler keeps redirects off and a bounded connect timeout.</summary>
     [TestMethod]
@@ -86,8 +103,8 @@ public sealed class MonitorHttpClientsTests
     [DataRow("https://[::1]/")]
     public async Task SdkOwnedArchiveRejectsUnsafeDestinations(string service)
     {
-        await using var jetstream = new AtProtoJetstream(uri: new Uri(service),
-            options: new JetstreamOptions { ApiKey = "test-api-key" });
+        await using AtProtoJetstream jetstream = JetstreamMonitor.CreateJetstream(
+            "test-api-key", new Uri(service), Microsoft.Extensions.Logging.Abstractions.NullLoggerFactory.Instance);
         using var timeout = CancellationTokenSource.CreateLinkedTokenSource(TestContext.CancellationToken);
         timeout.CancelAfter(TimeSpan.FromSeconds(10));
         Exception failure = await Assert.ThrowsAsync<Exception>(async () =>
@@ -118,5 +135,31 @@ public sealed class MonitorHttpClientsTests
     private sealed class InspectableJetstream : AtProtoJetstream
     {
         internal HttpClient CreateClient() => HttpClientFactory.CreateClient("idunno.atproto");
+    }
+
+    private sealed class RecordingLoggerProvider : ILoggerProvider
+    {
+        internal List<string> Categories { get; } = [];
+        internal List<string> Messages { get; } = [];
+
+        public ILogger CreateLogger(string categoryName)
+        {
+            Categories.Add(categoryName);
+            return new RecordingLogger(Messages);
+        }
+
+        public void Dispose()
+        {
+        }
+
+        private sealed class RecordingLogger(List<string> messages) : ILogger
+        {
+            public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+
+            public bool IsEnabled(LogLevel logLevel) => true;
+
+            public void Log<TState>(LogLevel logLevel, EventId eventId, TState state, Exception? exception,
+                Func<TState, Exception?, string> formatter) => messages.Add(formatter(state, exception));
+        }
     }
 }

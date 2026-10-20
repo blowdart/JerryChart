@@ -20,6 +20,10 @@ embeds its source commit SHA during the Docker build and links that build
 identity from the footer; local builds without a valid SHA display
 “Development build”.
 
+API and monitor console log entries include UTC timestamps with millisecond
+precision (`yyyy-MM-dd HH:mm:ss.fff UTC`), including monitor configuration errors
+reported before the host starts.
+
 | Project | Role |
 | --- | --- |
 | `JerryChart.AppHost` | Orchestrates MySQL, the API, CLI, and frontend |
@@ -531,6 +535,13 @@ monitor failure count, which continues past the backoff cap and resets on
 successful live checkpoint persistence or archive event processing. The Information-level message
 `Live Jetstream resumed; receiving events.` is emitted once per connection on
 its first sequenced event, not when the connection attempt starts.
+
+The Jetstream SDK uses the host's logger factory, so its WebSocket close status
+and description, receive-loop errors, and server notices reach console and
+OpenTelemetry logs under `idunno.AtProto.Jetstream.AtProtoJetstream`. Normal host
+log-level filtering applies; enable Debug for that category when connection-state
+details are needed. This does not enable SDK-managed reconnects or replace its
+SSRF-protected, SDK-owned HTTP transport.
 
 The snapshot's `onArchiveError` callback explicitly skips invalid records when
 a sequence is available, or invalid blocks when decoding fails before rows are

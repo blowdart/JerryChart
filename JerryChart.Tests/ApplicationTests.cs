@@ -95,6 +95,7 @@ public sealed partial class ApplicationTests
         StatisticsLastUpdated? emptyUpdate = await api.GetFromJsonAsync<StatisticsLastUpdated>("/statistics/last-updated", cancellationToken);
         Assert.IsNotNull(emptyUpdate);
         Assert.IsNull(emptyUpdate.UpdatedAt);
+        Assert.IsNull(emptyUpdate.AtUri);
         string? connectionString = await app.GetConnectionStringAsync("jerrychart", cancellationToken);
         Assert.IsNotNull(connectionString);
         await using MySqlDataSource metricsSource = new MySqlDataSourceBuilder(connectionString).Build();
@@ -142,10 +143,12 @@ public sealed partial class ApplicationTests
         StatisticsLastUpdated? updated = await updatedResponse.Content.ReadFromJsonAsync<StatisticsLastUpdated>(cancellationToken);
         Assert.IsNotNull(updated?.UpdatedAt);
         Assert.AreEqual(TimeSpan.Zero, updated.UpdatedAt.Value.Offset);
+        Assert.AreEqual("at://did:plc:postexcluded/app.bsky.feed.post/unresolved-19", updated.AtUri);
         using var updatedJson = System.Text.Json.JsonDocument.Parse(
             await updatedResponse.Content.ReadAsStringAsync(cancellationToken));
         Assert.AreEqual(updated.UpdatedAt.Value,
             DateTimeOffset.Parse(updatedJson.RootElement.GetProperty("updatedAt").GetString()!, CultureInfo.InvariantCulture));
+        Assert.AreEqual(updated.AtUri, updatedJson.RootElement.GetProperty("atUri").GetString());
     }
 
     /// <summary>Verifies statistics API responses and Next.js report rendering.</summary>
@@ -659,14 +662,24 @@ public sealed partial class ApplicationTests
         DateTimeOffset? persisted;
         await using (MySqlConnection connection = await source.OpenConnectionAsync(cancellationToken))
         {
+            await using MySqlCommand legacySchema = connection.CreateCommand();
+            legacySchema.CommandText = """
+                CREATE TABLE StatisticsUpdate (
+                    Id TINYINT NOT NULL PRIMARY KEY,
+                    UpdatedAt DATETIME(6) NOT NULL
+                ) ENGINE=InnoDB
+                """;
+            await legacySchema.ExecuteNonQueryAsync(cancellationToken);
             var monitor = new MonitorStore(connection);
             await monitor.InitializeAsync(cancellationToken);
             Assert.IsNull((await statistics.GetLastUpdatedAsync(cancellationToken)).UpdatedAt);
+            Assert.IsNull((await statistics.GetLastUpdatedAsync(cancellationToken)).AtUri);
             var hit = new Hit(new DateTimeOffset(2006, 1, 1, 0, 0, 0, TimeSpan.Zero),
                 new AtUri("at://did:plc:timestamp/app.bsky.feed.post/first"), new Did("did:plc:timestamp"),
                 StatisticsStore.RightJerryDid, ParentPost(StatisticsStore.RightJerryDid, "timestamp-parent"));
             await monitor.SaveHitAsync(hit, cancellationToken);
             DateTimeOffset? first = (await statistics.GetLastUpdatedAsync(cancellationToken)).UpdatedAt;
+            Assert.AreEqual(hit.AtUri.ToString(), (await statistics.GetLastUpdatedAsync(cancellationToken)).AtUri);
             Assert.IsNotNull(first);
             Assert.IsLessThan(1, Math.Abs((DateTimeOffset.UtcNow - first.Value).TotalMinutes));
             Assert.AreEqual(TimeSpan.Zero, first.Value.Offset);
@@ -677,14 +690,20 @@ public sealed partial class ApplicationTests
             await command.ExecuteNonQueryAsync(cancellationToken);
             await monitor.SaveHitAsync(hit, cancellationToken);
             Assert.IsNull((await statistics.GetLastUpdatedAsync(cancellationToken)).UpdatedAt);
+            Assert.IsNull((await statistics.GetLastUpdatedAsync(cancellationToken)).AtUri);
 
             await monitor.SaveHitAsync(hit with { AtUri = new AtUri("at://did:plc:timestamp/app.bsky.feed.post/second") },
                 cancellationToken);
+            Assert.AreEqual("at://did:plc:timestamp/app.bsky.feed.post/second",
+                (await statistics.GetLastUpdatedAsync(cancellationToken)).AtUri);
             command.CommandText = "UPDATE StatisticsUpdate SET UpdatedAt = '2020-01-01 00:00:00' WHERE Id = 1";
             await command.ExecuteNonQueryAsync(cancellationToken);
             var sentinel = new DateTimeOffset(2020, 1, 1, 0, 0, 0, TimeSpan.Zero);
             await monitor.SaveHitAsync(hit, cancellationToken);
             Assert.AreEqual(sentinel, (await statistics.GetLastUpdatedAsync(cancellationToken)).UpdatedAt);
+            Assert.AreEqual("at://did:plc:timestamp/app.bsky.feed.post/second",
+                (await statistics.GetLastUpdatedAsync(cancellationToken)).AtUri,
+                "A duplicate delivery must not replace the matching post.");
             command.CommandText = """
                 ALTER TABLE Hits
                 ADD CONSTRAINT CK_Hits_TestFailure CHECK (
@@ -698,20 +717,30 @@ public sealed partial class ApplicationTests
             await command.ExecuteNonQueryAsync(cancellationToken);
             Assert.AreEqual(sentinel, (await statistics.GetLastUpdatedAsync(cancellationToken)).UpdatedAt,
                 "The timestamp must roll back when the hit insertion fails.");
+            Assert.AreEqual("at://did:plc:timestamp/app.bsky.feed.post/second",
+                (await statistics.GetLastUpdatedAsync(cancellationToken)).AtUri,
+                "The post URI must roll back when the hit insertion fails.");
 
             await monitor.SaveHitAsync(hit with { AtUri = new AtUri("at://did:plc:timestamp/app.bsky.feed.post/third") },
                 cancellationToken);
             persisted = (await statistics.GetLastUpdatedAsync(cancellationToken)).UpdatedAt;
             Assert.IsTrue(persisted > sentinel);
+            Assert.AreEqual("at://did:plc:timestamp/app.bsky.feed.post/third",
+                (await statistics.GetLastUpdatedAsync(cancellationToken)).AtUri);
             await new ActorStore(connection).SaveAsync(new ActorRefreshRequest(hit.AuthorDid, 0),
                 new Handle("timestamp.example"), cancellationToken);
             Assert.AreEqual(persisted, (await statistics.GetLastUpdatedAsync(cancellationToken)).UpdatedAt);
+            Assert.AreEqual("at://did:plc:timestamp/app.bsky.feed.post/third",
+                (await statistics.GetLastUpdatedAsync(cancellationToken)).AtUri);
         }
 
         await using MySqlConnection restarted = await source.OpenConnectionAsync(cancellationToken);
         await new MonitorStore(restarted).InitializeAsync(cancellationToken);
         Assert.AreEqual(persisted, (await statistics.GetLastUpdatedAsync(cancellationToken)).UpdatedAt,
             "Restart must retain the persisted statistics timestamp.");
+        Assert.AreEqual("at://did:plc:timestamp/app.bsky.feed.post/third",
+            (await statistics.GetLastUpdatedAsync(cancellationToken)).AtUri,
+            "Restart must retain the matching post URI.");
     }
 
     private static async Task VerifyActorUpdaterStartupAsync(string connectionString,
@@ -1499,6 +1528,8 @@ public sealed partial class ApplicationTests
         }
         await using MySqlDataSource source = new MySqlDataSourceBuilder(options.ConnectionString).Build();
         var reports = new StatisticsStore(source, TimeProvider.System);
+        Assert.IsNull((await reports.GetLastUpdatedAsync(cancellationToken)).AtUri,
+            "A privacy deletion updates statistics without associating the timestamp with a surviving post.");
         Assert.AreEqual(new ReplySummary(1, 1, 0), await reports.GetReplySummaryAsync(cancellationToken));
         Assert.AreEqual(retained.ToString(), (await reports.GetAllRightJerryAuthorsAsync(cancellationToken)).Single().Did);
         Assert.AreEqual(1L, (await reports.GetTopRightJerryPostsAsync(cancellationToken)).Single().ReplyCount);

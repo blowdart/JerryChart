@@ -54,8 +54,26 @@ public static class MonitorSchema
         await EnsureColumnAsync(connection, "ParentUriBackfillStatus", cancellationToken);
         await EnsureColumnAsync(connection, "ParentUriBackfillAttemptCount", cancellationToken);
         await EnsureColumnAsync(connection, "ParentUriBackfillNextAttemptAt", cancellationToken);
+        await EnsureStatisticsUpdateAtUriAsync(connection, cancellationToken);
         await EnsureIndexAsync(connection, "IX_Hits_ParentAtUriHash", cancellationToken);
         await EnsureIndexAsync(connection, "IX_Hits_ParentUriBackfill", cancellationToken);
+    }
+
+    private static async Task EnsureStatisticsUpdateAtUriAsync(
+        MySqlConnection connection,
+        CancellationToken cancellationToken)
+    {
+        await using var command = connection.CreateCommand();
+        command.CommandText = """
+            SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS
+            WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'StatisticsUpdate' AND COLUMN_NAME = 'AtUri'
+            """;
+        if (Convert.ToInt64(await command.ExecuteScalarAsync(cancellationToken)) == 0)
+        {
+            command.CommandText =
+                "ALTER TABLE StatisticsUpdate ADD COLUMN AtUri VARCHAR(8192) CHARACTER SET ascii COLLATE ascii_bin NULL";
+            await command.ExecuteNonQueryAsync(cancellationToken);
+        }
     }
 
     private static async Task EnsureActorStatusAsync(MySqlConnection connection, CancellationToken cancellationToken)

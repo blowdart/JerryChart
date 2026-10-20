@@ -32,7 +32,9 @@ public sealed class ApiJsonContextTests
 
         Assert.AreEqual("""{"totalReplies":3,"rightJerryReplies":2,"wrongJerryReplies":1}""",
             Serialize(new ReplySummary(3, 2, 1)));
-        Assert.AreEqual("""{"updatedAt":null}""", Serialize(new StatisticsLastUpdated(null)));
+        Assert.AreEqual("""{"updatedAt":null,"atUri":null}""", Serialize(new StatisticsLastUpdated(null, null)));
+        Assert.AreEqual("""{"updatedAt":"2026-10-05T12:00:00+00:00","atUri":"at://did:plc:example/app.bsky.feed.post/reply"}""",
+            Serialize(new StatisticsLastUpdated(now, "at://did:plc:example/app.bsky.feed.post/reply")));
         using JsonDocument document = JsonDocument.Parse(Serialize(status));
         Assert.AreEqual(120, document.RootElement.GetProperty("monitor")
             .GetProperty("archiveEstimate").GetProperty("remainingSeconds").GetDouble());

@@ -124,7 +124,11 @@ test("processing status places the last detection directly below its heading", (
     "@/components/refresh-statistics": { RefreshStatistics },
   });
   for (const lastDetectedAt of [null, "2026-10-19T12:00:00Z"]) {
-    const tree = ProcessingStatus({ initial: { status: null, error: null }, lastDetectedAt });
+    const tree = ProcessingStatus({
+      initial: { status: null, error: null }, lastDetectedAt,
+      lastDetectedPostAtUri: lastDetectedAt === null
+        ? null : "at://did:plc:author/app.bsky.feed.post/matching-reply",
+    });
     const box = React.Children.toArray(tree.props.children).find(child => child.type === "div");
     const content = React.Children.toArray(box.props.children);
     assert.equal(content[0].props.children, "Processing status");
@@ -140,7 +144,10 @@ test("processing status places the last detection directly below its heading", (
     if (lastDetectedAt === null) {
       assert.match(markup, /not yet recorded/);
     } else {
+      assert.match(markup, /href="https:\/\/bsky\.app\/profile\/did:plc:author\/post\/matching-reply"/);
       assert.match(markup, /dateTime="2026-10-19T12:00:00Z"/i);
+      assert.match(markup, /<a href="https:\/\/bsky\.app\/profile\/did:plc:author\/post\/matching-reply"[^>]*><time[^>]*dateTime="2026-10-19T12:00:00Z"[^>]*>.*?<\/time><span class="sr-only"> \(view the matching reply on Bluesky\)<\/span><\/a>/);
+      assert.doesNotMatch(markup, /aria-label="View the matching Jerry no reply on Bluesky"/);
     }
   }
 });

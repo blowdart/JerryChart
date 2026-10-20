@@ -40,7 +40,7 @@ function modules(overrides = {}) {
 }
 
 const load = modules();
-const { rightJerryDid, isReplyPostList, blueskyPostUrl } = load("lib\\reply-posts.ts");
+const { rightJerryDid, isBlueskyPostUri, isReplyPostList, blueskyPostUrl } = load("lib\\reply-posts.ts");
 const { getBlueskyPosts } = load("lib\\bluesky-posts.ts");
 const uri = (key) => `at://${rightJerryDid}/app.bsky.feed.post/${key}`;
 const ranking = [
@@ -424,7 +424,43 @@ test("ranking validation rejects invalid identity, counts, duplicates, ordering 
     Array.from({ length: 6 }, (_, i) => ({ atUri: uri(`post${i}`), replyCount: 1 })),
   ]) assert.equal(isReplyPostList(invalid), false, JSON.stringify(invalid));
   assert.equal(blueskyPostUrl(uri("aaa")), `https://bsky.app/profile/${rightJerryDid}/post/aaa`);
+  const replyUri = "at://did:plc:anotherauthor/app.bsky.feed.post/reply-key";
+  assert.ok(isBlueskyPostUri(replyUri));
+  assert.equal(blueskyPostUrl(replyUri), "https://bsky.app/profile/did:plc:anotherauthor/post/reply-key");
+  for (const invalid of [
+    "at://did:plc:author/app.bsky.feed.post/..",
+    "at://did:plc:author/app.bsky.feed.post/key?query",
+    "at://did:plc:author/app.bsky.feed.post/key/extra",
+    "at://not-a-did/app.bsky.feed.post/key",
+    "https://bsky.app/profile/did:plc:author/post/key",
+  ]) assert.equal(isBlueskyPostUri(invalid), false, invalid);
   assert.throws(() => blueskyPostUrl("at://wrong/post/key"));
+});
+
+test("last-updated API response validates timestamp and matching reply URI", async (context) => {
+  const originalBase = process.env.API_BASE_URL;
+  process.env.API_BASE_URL = "http://private-api.example";
+  context.after(() => {
+    if (originalBase === undefined) delete process.env.API_BASE_URL;
+    else process.env.API_BASE_URL = originalBase;
+  });
+  let body = {
+    updatedAt: "2026-10-19T12:00:00Z",
+    atUri: "at://did:plc:author/app.bsky.feed.post/matching-reply",
+  };
+  replaceFetch(context, async (url, options) => {
+    assert.equal(url.href, "http://private-api.example/statistics/last-updated");
+    assert.equal(options.cache, "no-store");
+    return response(body);
+  });
+  const { getStatisticsLastUpdated } = load("lib\\api.ts");
+  assert.deepEqual(await getStatisticsLastUpdated(), body);
+  body = { updatedAt: null, atUri: null };
+  assert.deepEqual(await getStatisticsLastUpdated(), body);
+  body = { updatedAt: "2026-10-19T12:00:00Z", atUri: "at://wrong/post/key" };
+  await assert.rejects(getStatisticsLastUpdated(), /invalid statistics update time/);
+  body = { updatedAt: null, atUri: "at://did:plc:author/app.bsky.feed.post/matching-reply" };
+  await assert.rejects(getStatisticsLastUpdated(), /invalid statistics update time/);
 });
 
 test("server ranking fetch uses private API and rejects errors instead of fabricating data", async (context) => {

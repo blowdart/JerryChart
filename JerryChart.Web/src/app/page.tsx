@@ -105,7 +105,8 @@ export default async function Home() {
       </Card>
       </div>
       <footer className="space-y-1 border-t pt-6 text-right text-sm text-muted-foreground">
-        <ProcessingStatus initial={processingStatus} lastDetectedAt={lastUpdated} />
+        <ProcessingStatus initial={processingStatus} lastDetectedAt={lastUpdated.updatedAt}
+          lastDetectedPostAtUri={lastUpdated.atUri} />
       </footer>
     </main>
   );

@@ -473,7 +473,16 @@ monitor's replay cursor lock:
 | `JetstreamReplayProgress` | Complete archive checkpoint or live sequence, service, fallback starting sequence, and update time |
 | `ProcessingActivity` | Separate monitor/backfill/handle-updater run ownership, recorded phase, UTC heartbeat and lifecycle timestamps |
 | `ArchiveReplayActivity` | Ownership-fenced archive progress, generation-stall timestamps, consecutive mismatch count, and scheduled retry time; never used to alter the replay checkpoint |
-| `StatisticsUpdate` | UTC ingestion time and AT URI of the last new hit, committed atomically with that hit |
+| `StatisticsUpdate` | UTC ingestion time and AT URI of the last new hit replying directly to Jerry Chen, committed atomically with that hit |
+
+The last-detected timestamp and reply preview only describe replies whose
+immediate parent author is Jerry Chen. Other matching replies still contribute
+to the total and wrong-Jerry counts without advancing this timestamp. The API
+verifies that the stored URI belongs to a retained right-Jerry hit, so legacy
+timestamps for other accounts, missing replies, and timestamps without an
+identifiable reply are reported as unknown. Historical per-hit ingestion times
+were not retained; the next new right-Jerry reply establishes a known timestamp
+instead of substituting a post's creation time or the upgrade time.
 
 `ParentAuthorDid` and the immediate parent's full AT URI come from
 `reply.parent.uri`, not the thread root. The parent URI is stored with a SHA-256

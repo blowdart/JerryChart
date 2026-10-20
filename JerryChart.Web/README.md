@@ -7,8 +7,54 @@ connection configuration.
 The frontend renders Jerry no summaries, top reply authors, and monthly reply
 charts through server components. `API_BASE_URL` is supplied by Aspire and never exposed to the
 browser. MySQL is accessible only through the .NET API.
-The last-detected timestamp links to the matching reply on Bluesky when its AT
-URI is available.
+The last-detected timestamp tracks only matching replies directly to Jerry Chen
+and links to that reply on Bluesky when its AT URI is available. Replies to other
+accounts still contribute to the separate wrong-Jerry counter, but never advance
+this timestamp. The time remains the persisted ingestion time, not the post's
+creation time. Existing timestamps for other accounts, missing replies, or
+unclassified legacy timestamps without a URI are not displayed; historical
+per-reply ingestion times were not stored, so the next new qualifying reply
+establishes a known timestamp rather than inventing one from posting times.
+Hovering over or keyboard-focusing that link opens an official Bluesky embed.
+This preview performs no server-side or idle-page embed loading, post fetch,
+Open Graph scrape, or third-party script loading. The iframe is mounted only while the preview is open,
+and is removed on close, so reopening asks Bluesky again rather than using a
+JerryChart content cache. Link navigation and the timestamp remain unchanged.
+The preview has a close button, supports Escape outside the cross-origin iframe,
+and retains a direct link if the embed is blocked or unavailable.
+Image posts resize as Bluesky loads their media. Tall previews scroll within a
+viewport-bounded, keyboard-focusable region instead of growing over the page;
+the close button and direct link stay outside that region. On very narrow
+screens the region also scrolls horizontally to accommodate Bluesky's minimum
+300-pixel embed width.
+
+### Reply preview privacy
+
+Bluesky's official embed checks `post.author.labels` for `!no-unauthenticated`
+**before** rendering the post, substituting an external-site opt-out notice.
+Quoted posts are separately checked via `record.author.labels`, including quotes
+with media. This is author-level metadata: checking only `post.labels` is not
+sufficient. JerryChart does not render any post text, author details, media, or
+Open Graph fallback alongside the embed, nor pass Bluesky credentials.
+
+Verified on October 20, 2026 against Bluesky's
+[embed screen](https://github.com/bluesky-social/social-app/blob/5572bef8b22cfc7b4d8b5989e72ccf578ba942ff/bskyembed/src/screens/post.tsx)
+and [quoted-record renderer](https://github.com/bluesky-social/social-app/blob/5572bef8b22cfc7b4d8b5989e72ccf578ba942ff/bskyembed/src/components/embed.tsx).
+The deployed `embed.bsky.app` entry bundle (`post-D8-Hi36E.js`) also checks
+`post.author.labels` before rendering, and its imported `logo-WhKaIFp7.js`
+bundle checks quoted-record author labels. Kate Bevan's example
+(`did:plc:erlxz4sppc5uv7m4efmcvpsf`, post `3my5n4tyxfcud`) returns the opt-out
+in the author's labels, with an empty post-label array; its live embed displays
+only the opt-out notice, Bluesky branding, and navigation, not the post or avatar.
+The public API still
+returns its content; availability through that API is not permission to display
+it. Privacy enforcement inside the cross-origin frame remains Bluesky's
+responsibility and should be rechecked if their embed implementation changes.
+
+The iframe uses `no-referrer` and does not pass the optional referring-page
+parameter. Resize messages must match its origin, source window, and instance
+ID; heights are finite and bounded. Opening it still sends the visitor's IP
+address and requested post to Bluesky; see the site's privacy policy.
 
 The top-five posts card opens a ranked dialog of all resolved Jerry posts with
 recorded matching replies. Bluesky post text loads in sequential batches of five,

@@ -1,10 +1,8 @@
 <Project>
   <PropertyGroup>
     <ManagePackageVersionsCentrally>true</ManagePackageVersionsCentrally>
-    <CentralPackageTransitivePinningEnabled>true</CentralPackageTransitivePinningEnabled>
   </PropertyGroup>
   <ItemGroup>
-    <PackageVersion Include="MessagePack" Version="2.5.307" />
     <PackageVersion Include="SonarAnalyzer.CSharp" Version="10.35.0.4138" />
     <PackageVersion Include="System.CommandLine" Version="2.0.12" />
     <PackageVersion Include="Microsoft.Extensions.Telemetry.Abstractions" Version="10.10.0" />
@@ -12,11 +10,11 @@
     <PackageVersion Include="idunno.AtProto" Version="8.0.0" />
     <PackageVersion Include="idunno.Bluesky" Version="8.0.0" />
     <PackageVersion Include="idunno.Security.Ssrf" Version="5.4.0" />
-    <PackageVersion Include="Aspire.Hosting.JavaScript" Version="13.6.1" />
-    <PackageVersion Include="Aspire.Hosting.MySql" Version="13.6.1" />
-    <PackageVersion Include="Aspire.Hosting.Testing" Version="13.6.1" />
+    <PackageVersion Include="Aspire.Hosting.JavaScript" Version="13.6.2" />
+    <PackageVersion Include="Aspire.Hosting.MySql" Version="13.6.2" />
+    <PackageVersion Include="Aspire.Hosting.Testing" Version="13.6.2" />
     <PackageVersion Include="Nerdbank.GitVersioning" Version="3.10.94" />
-    <PackageVersion Include="Aspire.MySqlConnector" Version="13.6.1" />
+    <PackageVersion Include="Aspire.MySqlConnector" Version="13.6.2" />
     <PackageVersion Include="Microsoft.Extensions.Http.Resilience" Version="10.10.0" />
     <PackageVersion Include="Microsoft.Extensions.ServiceDiscovery" Version="10.10.0" />
     <PackageVersion Include="OpenTelemetry.Exporter.OpenTelemetryProtocol" Version="1.19.1" />

@@ -34,7 +34,7 @@
     "@types/react": "^19",
     "@types/react-dom": "^19",
     "esbuild": "^0.28.2",
-    "shadcn": "4.21.4",
+    "shadcn": "4.21.5",
     "tailwindcss": "^4",
     "typescript": "^7"
   }

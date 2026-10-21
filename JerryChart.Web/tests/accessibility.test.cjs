@@ -174,6 +174,7 @@ function replyPreviewHarness() {
   let nextTimer = 0;
   const source = {};
   let focused = 0;
+  let onOpenChange;
   const previousWindow = global.window;
   global.window = {
     addEventListener(name, handler) { listeners.set(name, handler); },
@@ -195,7 +196,7 @@ function replyPreviewHarness() {
     },
     useState(initial) {
       const index = stateIndex++;
-      if (!(index in states)) states[index] = initial;
+      if (!(index in states)) states[index] = typeof initial === "function" ? initial() : initial;
       return [states[index], value => {
         states[index] = typeof value === "function" ? value(states[index]) : value;
       }];
@@ -211,7 +212,10 @@ function replyPreviewHarness() {
   const { PostHoverCard } = loadModule("components\\post-hover-card.tsx", {
     react: hooks,
     "@base-ui/react/popover": {
-      Popover: { Root: "section", Trigger: "a", Portal: React.Fragment, Positioner: "div", Popup: "aside" },
+      Popover: {
+        Root: "section", Trigger: "a", Portal: React.Fragment, Positioner: "div", Popup: "aside",
+        createHandle: () => ({ open: () => onOpenChange(true, { reason: "imperative-action" }) }),
+      },
     },
   });
   function find(node, type) {
@@ -225,6 +229,7 @@ function replyPreviewHarness() {
     render(atUri = "at://did:plc:erlxz4sppc5uv7m4efmcvpsf/app.bsky.feed.post/3my5n4tyxfcud") {
       stateIndex = refIndex = effectIndex = 0;
       const raw = PostHoverCard({ atUri, children: "timestamp" });
+      onOpenChange = raw.props.onOpenChange;
       const tree = React.cloneElement(raw, {
         onOpenChange: (next) => raw.props.onOpenChange(next, { reason: "none" }),
       });

@@ -28,6 +28,10 @@ the timestamp; Tab enters the close button, scroll region, embedded document,
 and direct link, then continues to the next page control. Shift+Tab reverses
 that order. Closing restores focus without reopening the popup, and Enter or
 click on the timestamp still navigates to the post.
+Focus-opening uses the Popover handle so its focus manager is enabled even
+after a pointer-hover preview has been dismissed. Keyboard entry does not
+wait for Bluesky to load, and returning to the timestamp from the card does
+not restart the active embed.
 Image posts resize as Bluesky loads their media. Tall previews scroll within a
 viewport-bounded, keyboard-focusable region instead of growing over the page;
 the close button and direct link stay outside that region. On very narrow
@@ -119,12 +123,16 @@ npm run build
 npm run test:browser
 ```
 
-The real-component browser regression uses Playwright with an isolated local
-fixture and intercepted Bluesky responses, not the running Aspire application
+The real-component browser regression uses Playwright with an isolated,
+server-rendered and hydrated processing-status fixture and intercepted Bluesky
+responses, not the running Aspire application
 or external post content. On Windows it uses installed Microsoft Edge by default;
 elsewhere run `npx playwright install --with-deps chromium` first. Set
 `BROWSER_CHANNEL` to choose another installed browser channel. CI runs this
 regression with Chromium and retains its JUnit results alongside the Node tests.
+It covers Tab onto the last-detected timestamp followed by Tab into the card,
+including reopening after hover dismissal with the embed response still pending,
+forward/reverse tab order, closing, and ordinary timestamp navigation.
 
 For standalone development, set `API_BASE_URL` to the API's HTTP endpoint, then
 run `npm run dev`. Existing generated components and `components.json` are

@@ -1,42 +1,74 @@
 const assert = require("node:assert/strict");
 const http = require("node:http");
 const path = require("node:path");
+const { createRequire } = require("node:module");
 const { once } = require("node:events");
 const test = require("node:test");
 const { build } = require("esbuild");
 const { chromium } = require("playwright");
 
-test("real popover preserves link navigation and keyboard access through its portal", { timeout: 60000 }, async (t) => {
+test("hydrated processing status preserves reply preview navigation and keyboard access", { timeout: 60000 }, async (t) => {
   const root = path.resolve(__dirname, "..", "..");
-  const bundle = await build({
-    stdin: {
-      contents: `
-        import React from "react";
-        import { createRoot } from "react-dom/client";
-        import { PostHoverCard } from "./src/components/post-hover-card";
-        createRoot(document.getElementById("root")).render(<>
-          <button>Before preview</button>
-          <PostHoverCard atUri="at://did:plc:example/app.bsky.feed.post/reply">
-            <time dateTime="2026-10-20T12:00:00Z">Last reply timestamp</time>
-          </PostHoverCard>
-          <button>Refresh</button>
-        </>);
-      `,
-      resolveDir: root, loader: "tsx",
-    },
+  const fixture = `
+    import React from "react";
+    import { ProcessingStatus } from "./src/components/processing-status";
+    function Fixture() {
+      return <main>
+        <button>Before preview</button>
+        <ProcessingStatus initial={{status: null, error: null}}
+          lastDetectedAt="2026-10-20T12:00:00Z"
+          lastDetectedPostAtUri="at://did:plc:example/app.bsky.feed.post/reply" />
+        <a href="#after">After processing status</a>
+      </main>;
+    }
+  `;
+  const options = {
     bundle: true, write: false, jsx: "automatic",
     tsconfig: path.join(root, "tsconfig.json"),
     define: { "process.env.NODE_ENV": '"production"' },
+    plugins: [{
+      name: "isolated-router",
+      setup(build) {
+        build.onResolve({ filter: /^next\/navigation$/ }, () => ({ path: "router", namespace: "fixture" }));
+        build.onLoad({ filter: /.*/, namespace: "fixture" }, () => ({
+          contents: "export const useRouter = () => ({ refresh() {} });",
+        }));
+      },
+    }],
+  };
+  const serverBundle = await build({
+    ...options, platform: "node", format: "cjs", packages: "external",
+    stdin: {
+      contents: `${fixture}
+        import { renderToString } from "react-dom/server";
+        export const markup = renderToString(<Fixture />);
+      `,
+      resolveDir: root, loader: "tsx",
+    },
+  });
+  const serverModule = { exports: {} };
+  new Function("require", "module", "exports", serverBundle.outputFiles[0].text)(
+    createRequire(path.join(root, "package.json")), serverModule, serverModule.exports,
+  );
+  const bundle = await build({
+    ...options,
+    stdin: {
+      contents: `${fixture}
+        import { hydrateRoot } from "react-dom/client";
+        hydrateRoot(document.getElementById("root"), <Fixture />);
+      `,
+      resolveDir: root, loader: "tsx",
+    },
   });
   const server = http.createServer((request, response) => {
     if (request.url === "/app.js") {
       response.setHeader("Content-Type", "text/javascript");
       response.end(bundle.outputFiles[0].contents);
     } else {
-      response.setHeader("Content-Type", "text/html");
+      response.setHeader("Content-Type", "text/html; charset=utf-8");
       response.end(`<!doctype html><html lang="en"><title>Preview regression</title>
         <style>[role="region"] { max-height: 150px; overflow: auto; }</style>
-        <div id="root"></div><script src="/app.js"></script></html>`);
+        <div id="root">${serverModule.exports.markup}</div><script src="/app.js"></script></html>`);
     }
   });
   server.listen(0, "127.0.0.1");
@@ -45,14 +77,26 @@ test("real popover preserves link navigation and keyboard access through its por
   const browser = await chromium.launch({
     channel: process.env.BROWSER_CHANNEL ?? (process.platform === "win32" ? "msedge" : undefined),
   });
-  t.after(() => browser.close());
+  let embedGate = null;
+  t.after(async () => {
+    embedGate?.response.resolve();
+    await browser.close();
+  });
   const page = await browser.newPage();
-  await page.route("https://embed.bsky.app/**", route => route.fulfill({
-    contentType: "text/html",
-    body: `<!doctype html><title>Embed fixture</title>
-      <p>Rendered embed fixture</p><a href="https://bsky.app/">Bluesky</a>
-      <script>parent.postMessage({id:new URLSearchParams(location.search).get("id"),height:900},"*")</script>`,
-  }));
+  let embedRequests = 0;
+  await page.route("https://embed.bsky.app/**", async route => {
+    embedRequests++;
+    if (embedGate) {
+      embedGate.requested.resolve();
+      await embedGate.response.promise;
+    }
+    await route.fulfill({
+      contentType: "text/html",
+      body: `<!doctype html><title>Embed fixture</title>
+        <p>Rendered embed fixture</p><a href="https://bsky.app/">Bluesky</a>
+        <script>parent.postMessage({id:new URLSearchParams(location.search).get("id"),height:900},"*")</script>`,
+    });
+  });
   const navigations = [];
   await page.route("https://bsky.app/**", route => {
     navigations.push(route.request().url());
@@ -62,7 +106,7 @@ test("real popover preserves link navigation and keyboard access through its por
   page.on("pageerror", error => errors.push(error.message));
   const url = `http://127.0.0.1:${server.address().port}`;
   await page.goto(url);
-  const timestamp = page.getByRole("link", { name: "Last reply timestamp", exact: true });
+  const timestamp = page.getByRole("link", { name: /view the matching reply on Bluesky/ });
   const close = page.getByRole("button", { name: "Close reply preview" });
   const region = page.getByRole("region", { name: "Bluesky post. Scroll to see the full preview." });
   const refresh = page.getByRole("button", { name: "Refresh", exact: true });
@@ -118,5 +162,71 @@ test("real popover preserves link navigation and keyboard access through its por
   await page.keyboard.press("Enter");
   await page.waitForURL("https://bsky.app/profile/did:plc:example/post/reply");
   assert.equal(navigations.length, 2, "Enter must navigate the original timestamp link.");
+  for (const timing of ["loading", "rendered"]) {
+    await t.test(`Tab after hover dismissal enters the focus-opened card while embed is ${timing}`, async (t) => {
+      t.after(() => {
+        embedGate?.response.resolve();
+        embedGate = null;
+      });
+      await page.goto(url);
+      const before = page.getByRole("button", { name: "Before preview" });
+      await before.focus();
+      await timestamp.hover();
+      await close.waitFor();
+      await page.waitForFunction(() => document.querySelector("iframe")?.height === "900");
+      await before.hover();
+      await close.waitFor({ state: "hidden" });
+      if (timing === "loading") {
+        embedGate = { requested: Promise.withResolvers(), response: Promise.withResolvers() };
+      }
+      await page.keyboard.press("Tab");
+      assert.ok(await focused(timestamp), "Tab must focus the last-detected timestamp.");
+      if (embedGate) {
+        await embedGate.requested.promise;
+        assert.equal(await page.getByRole("status").textContent(), "Loading Bluesky preview...");
+      } else {
+        await page.waitForFunction(() => document.querySelector("iframe")?.height === "900");
+      }
+      await page.keyboard.press("Tab");
+      assert.ok(await focused(close), "Next Tab must enter the card, not the underlying Refresh button.");
+      const requestsBeforeReverseTab = embedRequests;
+      await page.keyboard.press("Shift+Tab");
+      assert.ok(await focused(timestamp));
+      await page.keyboard.press("Tab");
+      assert.ok(await focused(close));
+      assert.equal(embedRequests, requestsBeforeReverseTab, "Returning to the trigger must not reload the embed.");
+      if (embedGate) {
+        embedGate.response.resolve();
+        embedGate = null;
+      }
+      await page.waitForFunction(() => document.querySelector("iframe")?.height === "900");
+      assert.ok(await focused(close), "Embed loading must not move keyboard focus.");
+      await page.keyboard.press("Tab");
+      assert.ok(await focused(region));
+      await page.keyboard.press("Tab");
+      assert.ok(await focused(frameLink));
+      await page.keyboard.press("Tab");
+      assert.ok(await focused(page.getByRole("link", { name: "View the reply on Bluesky", exact: true })));
+      await page.keyboard.press("Shift+Tab");
+      assert.ok(await focused(frameLink));
+      await page.keyboard.press("Shift+Tab");
+      assert.ok(await focused(region));
+      await page.keyboard.press("Shift+Tab");
+      assert.ok(await focused(close));
+      await page.keyboard.press("Shift+Tab");
+      assert.ok(await focused(timestamp));
+      await page.keyboard.press("Shift+Tab");
+      assert.ok(await focused(before), "Reverse tabbing must leave the card at the preceding page control.");
+      await close.waitFor({ state: "hidden" });
+      await page.keyboard.press("Tab");
+      await page.keyboard.press("Tab");
+      assert.ok(await focused(close));
+      await page.keyboard.press("Escape");
+      await close.waitFor({ state: "hidden" });
+      assert.ok(await focused(timestamp));
+      await page.keyboard.press("Tab");
+      assert.ok(await focused(refresh));
+    });
+  }
   assert.deepEqual(errors, []);
 });

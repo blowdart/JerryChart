@@ -8,6 +8,7 @@ import { blueskyPostUrl } from "@/lib/reply-posts";
 export function PostHoverCard({ atUri, children }: { atUri: string; children: ReactNode }) {
   const href = blueskyPostUrl(atUri);
   const id = useId();
+  const [handle] = useState(() => Popover.createHandle());
   const trigger = useRef<HTMLAnchorElement>(null);
   const frame = useRef<HTMLIFrameElement>(null);
   const loadTimeout = useRef<number | undefined>(undefined);
@@ -44,12 +45,12 @@ export function PostHoverCard({ atUri, children }: { atUri: string; children: Re
   }, [open, id]);
 
   return (
-    <Popover.Root open={open} triggerId={id} onOpenChange={(next, details) => {
+    <Popover.Root handle={handle} open={open} triggerId={id} onOpenChange={(next, details) => {
       if (details.reason === "trigger-press") {
         details.cancel();
         return;
       }
-      if (next) {
+      if (next && !open) {
         setHeight(400);
         setLoading(true);
         setFailed(false);
@@ -58,18 +59,16 @@ export function PostHoverCard({ atUri, children }: { atUri: string; children: Re
       }
       setOpen(next);
     }}>
-      <Popover.Trigger id={id} nativeButton={false} openOnHover
+      <Popover.Trigger handle={handle} id={id} nativeButton={false} openOnHover
         render={<a ref={trigger} href={href} />} role="link" className="underline underline-offset-4"
         onClick={(event) => event.preventBaseUIHandler()}
         onKeyDown={(event) => {
           if (event.key === " ") event.preventBaseUIHandler();
         }}
         onFocus={() => {
-          if (!open && !suppressFocusOpen.current) {
-            setHeight(400);
-            setLoading(true);
-            setFailed(false);
-            setOpen(true);
+          if (!suppressFocusOpen.current) {
+            // A state-only open preserves the previous hover reason, which disables portal tab order.
+            handle.open(id);
           }
         }}
         onBlur={() => { suppressFocusOpen.current = false; }}>

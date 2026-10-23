@@ -17,7 +17,7 @@
     "cn": "^0.4.0",
     "linkify-it": "^6.1.0",
     "lucide-react": "^1.57.0",
-    "next": "16.4.1",
+    "next": "16.4.2",
     "react": "19.3.1",
     "react-dom": "19.3.1",
     "server-only": "^0.0.1",

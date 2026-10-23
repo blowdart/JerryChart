@@ -34,7 +34,7 @@
     "@types/react-dom": "^19",
     "esbuild": "^0.28.2",
     "playwright": "^1.64.1",
-    "shadcn": "4.21.5",
+    "shadcn": "4.22.0",
     "tailwindcss": "^4",
     "typescript": "^7"
   }

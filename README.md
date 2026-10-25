@@ -206,8 +206,14 @@ For `aspire run`, install the CLI after installing .NET:
 dotnet tool install --global Aspire.Cli --version 13.6.2
 ```
 
-If already installed, use `dotnet tool update --global Aspire.Cli --version
-13.6.2`, or keep a compatible newer version. No separate Aspire workload is
+If already installed, use:
+
+```powershell
+dotnet tool update --global Aspire.Cli --version 13.6.2 --allow-downgrade
+```
+
+The downgrade flag allows replacing an existing newer CLI, such as 13.6.4.
+Alternatively, keep a compatible newer version. No separate Aspire workload is
 required. Verify the tools before starting:
 
 ```powershell

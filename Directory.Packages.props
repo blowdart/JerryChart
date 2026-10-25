@@ -7,14 +7,14 @@
     <PackageVersion Include="System.CommandLine" Version="2.0.13" />
     <PackageVersion Include="Microsoft.Extensions.Telemetry.Abstractions" Version="10.11.0" />
     <PackageVersion Include="Microsoft.Extensions.TimeProvider.Testing" Version="10.11.0" />
-    <PackageVersion Include="idunno.AtProto" Version="8.0.0" />
-    <PackageVersion Include="idunno.Bluesky" Version="8.0.0" />
+    <PackageVersion Include="idunno.AtProto" Version="9.0.0-prerelease.gb2ef62d6c6" />
+    <PackageVersion Include="idunno.Bluesky" Version="9.0.0-prerelease.gb2ef62d6c6" />
     <PackageVersion Include="idunno.Security.Ssrf" Version="5.4.0" />
-    <PackageVersion Include="Aspire.Hosting.JavaScript" Version="13.6.2" />
-    <PackageVersion Include="Aspire.Hosting.MySql" Version="13.6.2" />
-    <PackageVersion Include="Aspire.Hosting.Testing" Version="13.6.2" />
+    <PackageVersion Include="Aspire.Hosting.JavaScript" Version="13.6.4" />
+    <PackageVersion Include="Aspire.Hosting.MySql" Version="13.6.4" />
+    <PackageVersion Include="Aspire.Hosting.Testing" Version="13.6.4" />
     <PackageVersion Include="Nerdbank.GitVersioning" Version="3.10.94" />
-    <PackageVersion Include="Aspire.MySqlConnector" Version="13.6.2" />
+    <PackageVersion Include="Aspire.MySqlConnector" Version="13.6.4" />
     <PackageVersion Include="Microsoft.Extensions.Http.Resilience" Version="10.11.0" />
     <PackageVersion Include="Microsoft.Extensions.ServiceDiscovery" Version="10.11.0" />
     <PackageVersion Include="OpenTelemetry.Exporter.OpenTelemetryProtocol" Version="1.20.0" />

@@ -203,11 +203,11 @@ need to be installed separately: Aspire starts it in Docker.
 For `aspire run`, install the CLI after installing .NET:
 
 ```powershell
-dotnet tool install --global Aspire.Cli --version 13.6.2
+dotnet tool install --global Aspire.Cli --version 13.6.4
 ```
 
 If already installed, use `dotnet tool update --global Aspire.Cli --version
-13.6.2`, or keep a compatible newer version. No separate Aspire workload is
+13.6.4`, or keep a compatible newer version. No separate Aspire workload is
 required. Verify the tools before starting:
 
 ```powershell
@@ -432,7 +432,7 @@ before exposing it publicly.
 | MySQL access denied after changing the password | A persisted volume retains its original password; changing the secret does not rotate it. Restore the correct secret or rotate the database password explicitly. |
 | Container startup fails | Start Docker, confirm `docker info` succeeds, select Linux containers, and check access to the `mysql:8.4` image. |
 | HTTPS certificate error | Trust the development certificate or use the `http` launch profile. |
-| NuGet restore fails for idunno packages | Check access to nuget.org, the package source configured in `nuget.config`. |
+| NuGet restore fails for idunno packages | Check access to the `blowdart-myget` feed configured in `nuget.config`; the pinned prerelease packages come from MyGet. |
 | Only a few users or replies appear | Check monitor logs for ongoing archive replay, retries, or quota waits; the website shows recorded data, not archive completion. |
 
 ## Jetstream monitor
@@ -449,8 +449,9 @@ dashboard. Each meter produces measurements when its corresponding SDK
 component is used.
 
 The monitor uses `idunno.AtProto` and `idunno.Bluesky`
-**8.0.0** from nuget.org, following the documentation and sample for the
-[v8.0.0 release](https://github.com/blowdart/idunno.Bluesky/blob/v8.0.0/docs/docs/jetstreamReplay.md).
+**9.0.0-prerelease.gb2ef62d6c6** from the `blowdart-myget` feed. This prerelease
+preserves live interruption causes and applies bounded backpressure when the
+stream consumer falls behind.
 It replays `app.bsky.feed.post` commits for all authors and consumes post commits
 and identity events in the live tail. A hit must be a reply and
 contain the whole words `Jerry` and `no`, case-insensitively, separated by
@@ -1326,8 +1327,9 @@ All explicit package versions belong there; project `PackageReference` items
 have no versions. SDK versions for Aspire and MSTest are managed separately
 under `msbuild-sdks` in `global.json`. C# is pinned to version 13.
 
-`nuget.config` restores all packages, including stable `idunno.AtProto`,
-`idunno.AtProto.Types`, and `idunno.Bluesky`, exclusively from nuget.org.
+`nuget.config` maps `idunno.AtProto*` and `idunno.Bluesky*` to the
+`blowdart-myget` feed for the pinned prerelease, including the transitive
+`idunno.AtProto.Types` package. Other packages restore from nuget.org.
 The monitor's pinned versions are in
 `Directory.Packages.props`; `idunno.AtProto.Jetstream` is a namespace in the
 `idunno.AtProto` package, not a separate package.

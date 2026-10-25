@@ -9,7 +9,7 @@ and monthly charts.
 
 ![Jerry No dashboard showing reply totals, the five most-replied-to posts, a monthly reply chart, the top ten users, and processing status.](docs/images/jerrychart-website.png)
 
-Built with .NET 10, Aspire 13.6, MySQL 8.4, and Next.js with shadcn/ui and
+Built with .NET 10, Aspire 13.6.2, MySQL 8.4, and Next.js with shadcn/ui and
 Tailwind CSS. Historical replay resumes from durable checkpoints before
 switching to live Jetstream monitoring. Statistics reflect data recorded so
 far, not necessarily complete historical coverage.
@@ -203,11 +203,11 @@ need to be installed separately: Aspire starts it in Docker.
 For `aspire run`, install the CLI after installing .NET:
 
 ```powershell
-dotnet tool install --global Aspire.Cli --version 13.6.4
+dotnet tool install --global Aspire.Cli --version 13.6.2
 ```
 
 If already installed, use `dotnet tool update --global Aspire.Cli --version
-13.6.4`, or keep a compatible newer version. No separate Aspire workload is
+13.6.2`, or keep a compatible newer version. No separate Aspire workload is
 required. Verify the tools before starting:
 
 ```powershell

@@ -1410,7 +1410,7 @@ The frontend's postinstall installs the locked lint dependencies separately,
 avoiding incompatible compiler peers in the application dependency tree.
 
 **Accepted developer-tool advisory:** Next.js lint tooling
-depend transitively on `braces` through glob-processing packages.
+depends transitively on `braces` through glob-processing packages.
 [GHSA-vfj7-8cjw-p6xm](https://github.com/advisories/GHSA-vfj7-8cjw-p6xm)
 reports stack-exhaustion denial of service from deeply nested patterns, with no
 patched `braces` release currently available. These dependencies are development

@@ -921,6 +921,8 @@ public sealed partial class ApplicationTests
         await using MySqlDataSource dataSource = new MySqlDataSourceBuilder(options.ConnectionString).Build();
         var processing = new ProcessingStatusStore(dataSource, TimeProvider.System);
         int firstCalls = 0;
+        var firstClock = new Microsoft.Extensions.Time.Testing.FakeTimeProvider(
+            DateTimeOffset.FromUnixTimeSeconds(DateTimeOffset.UtcNow.ToUnixTimeSeconds()));
         using (var firstHttp = new HttpClient(new StubHandler(_ =>
         {
             firstCalls++;
@@ -933,7 +935,7 @@ public sealed partial class ApplicationTests
         {
             var firstClient = new ParentPostClient(firstHttp);
             var backfiller = new ParentUriBackfiller(dataSource, firstClient, NullLogger.Instance,
-                wait: (_, _) =>
+                timeProvider: firstClock, wait: (_, _) =>
                 {
                     shutdown.Cancel();
                     return Task.FromCanceled(shutdown.Token);
@@ -947,7 +949,7 @@ public sealed partial class ApplicationTests
         {
             command.CommandText = """
                 SELECT ParentUriBackfillStatus, ParentUriBackfillAttemptCount,
-                    TIMESTAMPDIFF(SECOND, UTC_TIMESTAMP(6), ParentUriBackfillNextAttemptAt)
+                    ParentUriBackfillNextAttemptAt
                 FROM Hits WHERE AtUri = @uri
                 """;
             command.Parameters.AddWithValue("@uri", retryHit);
@@ -955,7 +957,10 @@ public sealed partial class ApplicationTests
             Assert.IsTrue(await reader.ReadAsync(cancellationToken));
             Assert.AreEqual((byte)ParentUriBackfillStatus.RetryPending, reader.GetByte(0));
             Assert.AreEqual(1, reader.GetInt32(1));
-            Assert.IsTrue(reader.GetInt64(2) is >= 0 and <= 1);
+            DateTime retryAt = reader.GetDateTime(2);
+            DateTime retryBase = firstClock.GetUtcNow().UtcDateTime;
+            Assert.IsTrue(retryAt >= retryBase + RetryLoop.Delay(1, 0) &&
+                retryAt <= retryBase + RetryLoop.Delay(1, 1));
         }
 
         // Like the real AppView, answer only for the URIs that were actually requested.
@@ -1035,6 +1040,8 @@ public sealed partial class ApplicationTests
             await command.ExecuteNonQueryAsync(cancellationToken);
         }
 
+        var rateLimitClock = new Microsoft.Extensions.Time.Testing.FakeTimeProvider(
+            DateTimeOffset.FromUnixTimeSeconds(DateTimeOffset.UtcNow.ToUnixTimeSeconds()));
         using (var rateLimitHttp = new HttpClient(new StubHandler(_ =>
         {
             var response = new HttpResponseMessage(System.Net.HttpStatusCode.TooManyRequests);
@@ -1044,7 +1051,8 @@ public sealed partial class ApplicationTests
         using (var shutdown = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken))
         {
             var backfiller = new ParentUriBackfiller(dataSource,
-                new ParentPostClient(rateLimitHttp), NullLogger.Instance, wait: async (_, _) =>
+                new ParentPostClient(rateLimitHttp, new AppViewRateLimiter(rateLimitClock)), NullLogger.Instance,
+                timeProvider: rateLimitClock, wait: async (_, _) =>
                 {
                     Assert.AreEqual("retrying", (await processing.GetAsync(cancellationToken)).ParentUriBackfill.Activity.State);
                     await shutdown.CancelAsync();
@@ -1058,7 +1066,7 @@ public sealed partial class ApplicationTests
         {
             command.CommandText = """
                 SELECT ParentUriBackfillStatus, ParentUriBackfillAttemptCount,
-                    TIMESTAMPDIFF(SECOND, UTC_TIMESTAMP(6), ParentUriBackfillNextAttemptAt)
+                    ParentUriBackfillNextAttemptAt
                 FROM Hits WHERE AtUri = @uri
                 """;
             command.Parameters.AddWithValue("@uri", rateLimitedHit);
@@ -1066,7 +1074,7 @@ public sealed partial class ApplicationTests
             Assert.IsTrue(await reader.ReadAsync(cancellationToken));
             Assert.AreEqual((byte)ParentUriBackfillStatus.RetryPending, reader.GetByte(0));
             Assert.AreEqual(1, reader.GetInt32(1));
-            Assert.IsTrue(reader.GetInt64(2) is >= 599 and <= 600,
+            Assert.AreEqual(rateLimitClock.GetUtcNow().UtcDateTime.AddMinutes(10), reader.GetDateTime(2),
                 "A Retry-After cooldown must survive restarting the one-off command.");
         }
 

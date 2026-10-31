@@ -1389,13 +1389,19 @@ endpoint before `npm run dev`. Keep this server-only variable unprefixed by
 `NEXT_PUBLIC_`.
 
 The frontend uses React/React DOM 19.3, TypeScript 7, ESLint 9 with the
-Next.js 16.3.8 flat configuration, and the shadcn 4 CLI. Node 26 is required
+Next.js 16.3.8 flat configuration. Node 26 is required
 and its type definitions match the runtime. `npm run typecheck` generates
 Next.js route types before invoking TypeScript, so it works on a clean checkout.
 Next.js builds use the TypeScript CLI; Node tests use esbuild to transpile
 the real source modules because TypeScript 7 no longer exposes the old
 JavaScript compiler API. Generated shadcn/ui components remain in the source
 tree; package upgrades do not regenerate them.
+The unused shadcn CLI is not installed: its transitive `deepmerge` dependency
+has no patched release for
+[GHSA-gcqx-w48m-w2h4](https://github.com/advisories/GHSA-gcqx-w48m-w2h4).
+Maintain generated components directly rather than downloading the vulnerable
+CLI through `npx shadcn@latest`. Reintroduce the CLI only when a supported
+dependency chain resolves the advisory.
 ESLint remains on 9.x because the Next.js React/import/accessibility plugins
 do not yet support ESLint 10. The private `tooling/lint` npm package supplies
 TypeScript 6 to `eslint-config-next` and its lint dependencies, which still require the
@@ -1403,7 +1409,7 @@ JavaScript compiler API. The application and Next.js build use TypeScript 7.
 The frontend's postinstall installs the locked lint dependencies separately,
 avoiding incompatible compiler peers in the application dependency tree.
 
-**Accepted developer-tool advisory:** modern shadcn and Next.js lint tooling
+**Accepted developer-tool advisory:** Next.js lint tooling
 depend transitively on `braces` through glob-processing packages.
 [GHSA-vfj7-8cjw-p6xm](https://github.com/advisories/GHSA-vfj7-8cjw-p6xm)
 reports stack-exhaustion denial of service from deeply nested patterns, with no

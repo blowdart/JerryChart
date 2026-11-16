@@ -9,7 +9,7 @@ namespace JerryChart.Monitor;
 
 internal sealed class ArchiveStallTracker(TimeProvider clock, ILogger logger)
 {
-    private readonly object _gate = new();
+    private readonly Lock _gate = new();
     private ArchiveReplayStatus _status = new(clock.GetUtcNow(), null, null, 0, null);
     private bool _initialized;
 

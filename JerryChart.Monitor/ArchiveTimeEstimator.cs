@@ -13,7 +13,7 @@ internal sealed class ArchiveTimeEstimator(long highWaterSequence, TimeProvider 
     private readonly Queue<(DateTimeOffset Time, long Sequence)> _samples = [];
     private DateTimeOffset? _lastAdvance;
     private ArchiveReplayEstimate? _estimate;
-    private readonly object _deliveryLock = new();
+    private readonly Lock _deliveryLock = new();
     private readonly long _deliveryStarted = clock.GetTimestamp();
     private readonly DateTimeOffset _deliveryStartedAt = clock.GetUtcNow();
     private long? _lastDelivery;
@@ -79,26 +79,26 @@ internal sealed class ArchiveTimeEstimator(long highWaterSequence, TimeProvider 
 
         HighWaterSequence = sequence;
         _lastAdvance = now;
-        while (_samples.TryPeek(out var oldest) && now - oldest.Time > TimeSpan.FromMinutes(10))
+        while (_samples.TryPeek(out (DateTimeOffset Time, long Sequence) oldest) && now - oldest.Time > TimeSpan.FromMinutes(10))
         {
             _samples.Dequeue();
         }
 
-        var first = _samples.TryPeek(out var baseline) ? baseline : (Time: now, Sequence: sequence);
+        (DateTimeOffset Time, long Sequence) = _samples.TryPeek(out (DateTimeOffset Time, long Sequence) baseline) ? baseline : (Time: now, Sequence: sequence);
         if (_samples.Count == 0 || now - _samples.Last().Time >= TimeSpan.FromSeconds(15))
         {
             _samples.Enqueue((now, sequence));
         }
 
-        double seconds = (now - first.Time).TotalSeconds;
-        if (seconds < 120 || sequence <= first.Sequence)
+        double seconds = (now - Time).TotalSeconds;
+        if (seconds < 120 || sequence <= Sequence)
         {
             return null;
         }
 
         // Sequence distance is a proxy for work, not an event count. Use floating point before subtracting
         // to avoid overflowing arithmetic on valid long cursors; never expose a non-finite estimate.
-        double remaining = ((double)sealedTip - sequence) * seconds / ((double)sequence - first.Sequence);
+        double remaining = ((double)sealedTip - sequence) * seconds / ((double)sequence - Sequence);
         _estimate = double.IsFinite(remaining) && remaining >= 0
             ? new ArchiveReplayEstimate(remaining, now) : null;
         return _estimate;

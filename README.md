@@ -449,7 +449,7 @@ dashboard. Each meter produces measurements when its corresponding SDK
 component is used.
 
 The monitor uses `idunno.AtProto` and `idunno.Bluesky`
-**9.0.0-prerelease.gb2ef62d6c6** from the `blowdart-myget` feed. This prerelease
+**9.0.0-prerelease.gf0076b0581** from the `blowdart-myget` feed. This prerelease
 preserves live interruption causes and applies bounded backpressure when the
 stream consumer falls behind.
 It replays `app.bsky.feed.post` commits for all authors and consumes post commits

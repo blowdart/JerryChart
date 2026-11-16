@@ -20,4 +20,16 @@
     <TestingExtensionsProfile>Default</TestingExtensionsProfile>
   </PropertyGroup>
 
+  <ItemGroup>
+    <PackageVersion Update="Microsoft.Testing.Extensions.TrxReport" Version="2.5.3" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageVersion Update="MSTest.TestAdapter" Version="4.5.3" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageVersion Update="MSTest.TestFramework" Version="4.5.3" />
+  </ItemGroup>
+
 </Project>

@@ -39,8 +39,7 @@ public sealed class OperatorJobTests
 
     internal static string PostsForRequest(HttpRequestMessage request)
     {
-        string[] uris = request.RequestUri!.Query.TrimStart('?').Split('&')
-            .Select(parameter => Uri.UnescapeDataString(parameter["uris=".Length..])).ToArray();
+        string[] uris = [.. request.RequestUri!.Query.TrimStart('?').Split('&').Select(parameter => Uri.UnescapeDataString(parameter["uris=".Length..]))];
         return new JsonObject
         {
             ["posts"] = new JsonArray(JsonNode.Parse(PostsJson)!["posts"]!.AsArray()
@@ -68,15 +67,13 @@ public sealed class OperatorJobTests
     [TestMethod]
     public async Task VerifiesPostsInBoundedBatches()
     {
-        string[] uris = Enumerable.Range(0, 26)
-            .Select(index => $"at://did:plc:author/app.bsky.feed.post/post{index}").ToArray();
+        string[] uris = [.. Enumerable.Range(0, 26).Select(index => $"at://did:plc:author/app.bsky.feed.post/post{index}")];
         var sizes = new List<int>();
         using var client = new HttpClient(new OperatorHttpHandler((request, _) =>
         {
             Assert.AreEqual("public.api.bsky.app", request.RequestUri!.Host);
             Assert.AreEqual("/xrpc/app.bsky.feed.getPosts", request.RequestUri.AbsolutePath);
-            string[] batch = request.RequestUri.Query.TrimStart('?').Split('&')
-                .Select(parameter => Uri.UnescapeDataString(parameter["uris=".Length..])).ToArray();
+            string[] batch = [.. request.RequestUri.Query.TrimStart('?').Split('&').Select(parameter => Uri.UnescapeDataString(parameter["uris=".Length..]))];
             sizes.Add(batch.Length);
             var posts = new JsonArray(batch.Select(uri =>
             {
@@ -93,7 +90,7 @@ public sealed class OperatorJobTests
         IReadOnlyDictionary<string, VerifiedAuditPost> result = await new ThreadAudit(client)
             .VerifyAsync(uris.Concat(uris), TestContext.CancellationToken);
 
-        Assert.AreSequenceEqual(new[] { 25, 1 }, sizes);
+        Assert.AreSequenceEqual([25, 1], sizes);
         Assert.HasCount(26, result);
         Assert.IsTrue(result.Values.All(post => post.Qualifies && post.ParentUri == RootUri));
     }
@@ -273,7 +270,7 @@ public sealed class OperatorJobTests
             return Task.FromResult(7);
         }
 
-        var command = MonitorCommand.Create(_ => throw new AssertFailedException("Must not start ingestion."),
+        System.CommandLine.RootCommand command = MonitorCommand.Create(_ => throw new AssertFailedException("Must not start ingestion."),
             auditThread: (_, _) => Invoke("audit"), refreshActor: (_, _) => Invoke("refresh"),
             checkConsistency: _ => Invoke("check"), replayStatus: _ => Invoke("status"));
         int result = await command.Parse(arguments).InvokeAsync(cancellationToken: TestContext.CancellationToken);
@@ -298,8 +295,8 @@ public sealed class OperatorJobTests
     [DataRow("replay-status --help", 0)]
     public async Task InvalidArgumentsAndHelpDoNotRunJobs(string arguments, int exitCode)
     {
-        Task<int> Unexpected() => throw new AssertFailedException("No handler should run.");
-        var command = MonitorCommand.Create(_ => Unexpected(), auditThread: (_, _) => Unexpected(),
+        static Task<int> Unexpected() => throw new AssertFailedException("No handler should run.");
+        System.CommandLine.RootCommand command = MonitorCommand.Create(_ => Unexpected(), auditThread: (_, _) => Unexpected(),
             refreshActor: (_, _) => Unexpected(), checkConsistency: _ => Unexpected(), replayStatus: _ => Unexpected());
         Assert.AreEqual(exitCode, await command.Parse(arguments).InvokeAsync(cancellationToken: TestContext.CancellationToken));
     }

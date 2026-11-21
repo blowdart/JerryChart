@@ -10,6 +10,13 @@ const postcss = require("postcss");
 const tailwind = require("@tailwindcss/postcss");
 const { chromium } = require("playwright");
 
+async function closeFixture(server, gate, browser) {
+  gate?.resolve();
+  const serverClosed = new Promise((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
+  server.closeAllConnections();
+  await Promise.all([serverClosed, browser?.close()]);
+}
+
 test("reply Sankey loads on demand, preserves all months and offers accessible counts", { timeout: 60000 }, async (t) => {
   const root = path.resolve(__dirname, "..", "..");
   const fixture = `
@@ -86,13 +93,10 @@ test("reply Sankey loads on demand, preserves all months and offers accessible c
   });
   server.listen(0, "127.0.0.1");
   await once(server, "listening");
-  t.after(() => new Promise((resolve, reject) => server.close(error => error ? reject(error) : resolve())));
-  const browser = await chromium.launch({
+  let browser;
+  t.after(() => closeFixture(server, gate, browser));
+  browser = await chromium.launch({
     channel: process.env.BROWSER_CHANNEL ?? (process.platform === "win32" ? "msedge" : undefined),
-  });
-  t.after(async () => {
-    gate?.resolve();
-    await browser.close();
   });
   const page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
   const errors = [];
@@ -130,6 +134,39 @@ test("reply Sankey loads on demand, preserves all months and offers accessible c
   assert.ok(await x("2024") < await x("January 2024"));
   assert.ok(await page.locator(".recharts-sankey-link").evaluateAll(elements =>
     elements.every(element => !element.innerHTML.includes("NaN"))));
+  for (const theme of ["light", "dark"]) {
+    const contrasts = await page.evaluate((theme) => {
+      document.documentElement.classList.toggle("dark", theme === "dark");
+      const dialog = document.querySelector("dialog");
+      const links = [...document.querySelectorAll("path.recharts-sankey-link")];
+      const context = document.createElement("canvas").getContext("2d");
+      if (!dialog || !context || links.length === 0) throw new Error("Cannot measure Sankey link contrast.");
+      const color = (value) => {
+        context.clearRect(0, 0, 1, 1);
+        context.fillStyle = value;
+        context.fillRect(0, 0, 1, 1);
+        return [...context.getImageData(0, 0, 1, 1).data];
+      };
+      const background = color(getComputedStyle(dialog).backgroundColor);
+      const luminance = (rgb) => rgb.slice(0, 3).map((channel) => {
+        const value = channel / 255;
+        return value <= 0.04045 ? value / 12.92 : ((value + 0.055) / 1.055) ** 2.4;
+      }).reduce((sum, channel, index) => sum + channel * [0.2126, 0.7152, 0.0722][index], 0);
+      return links.map((link) => {
+        const style = getComputedStyle(link);
+        const stroke = color(style.stroke);
+        let opacity = Number(style.strokeOpacity) * stroke[3] / 255;
+        for (let element = link; element && element !== dialog; element = element.parentElement) {
+          opacity *= Number(getComputedStyle(element).opacity);
+        }
+        const foreground = stroke.map((channel, index) => channel * opacity + background[index] * (1 - opacity));
+        const values = [luminance(foreground), luminance(background)].sort((a, b) => b - a);
+        return (values[0] + 0.05) / (values[1] + 0.05);
+      });
+    }, theme);
+    assert.ok(contrasts.every(ratio => ratio >= 3), `${theme} Sankey links must have at least 3:1 contrast: ${Math.min(...contrasts).toFixed(2)}:1`);
+  }
+  await page.evaluate(() => document.documentElement.classList.remove("dark"));
   await page.getByText("View exact reply counts as a table", { exact: true }).click();
   const counts = page.getByRole("table", { name: "All-time reply flow counts, with right-Jerry years and months in UTC." });
   await counts.waitFor();
@@ -183,4 +220,39 @@ test("reply Sankey loads on demand, preserves all months and offers accessible c
   await chartNodes.last().waitFor();
   if (process.env.SANKEY_SCREENSHOT) await page.screenshot({ path: process.env.SANKEY_SCREENSHOT });
   assert.deepEqual(errors, []);
+});
+
+test("Sankey fixture cleanup releases a pending response before shutdown", { timeout: 10000 }, async (t) => {
+  const gate = Promise.withResolvers();
+  const requested = Promise.withResolvers();
+  let released = false;
+  const server = http.createServer(async (_request, response) => {
+    requested.resolve();
+    await gate.promise;
+    released = true;
+    response.end("done");
+  });
+  server.listen(0, "127.0.0.1");
+  await once(server, "listening");
+  t.after(() => {
+    gate.resolve();
+    server.closeAllConnections();
+    if (server.listening) server.close();
+  });
+  const request = http.get(`http://127.0.0.1:${server.address().port}`);
+  request.on("error", error => {
+    if (error.code !== "ECONNRESET") throw error;
+  });
+  await requested.promise;
+  let timer;
+  try {
+    await Promise.race([
+      closeFixture(server, gate),
+      new Promise((_resolve, reject) => { timer = setTimeout(() => reject(new Error("Fixture shutdown hung.")), 3000); }),
+    ]);
+  } finally {
+    clearTimeout(timer);
+  }
+  assert.ok(released, "Cleanup must release the gated response.");
+  assert.equal(server.listening, false);
 });

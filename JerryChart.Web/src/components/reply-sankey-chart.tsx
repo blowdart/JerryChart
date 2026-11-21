@@ -46,7 +46,7 @@ export function ReplySankeyChart({ flow }: { flow: ReplyFlow }) {
             <ResponsiveContainer width="100%" height="100%">
               <Sankey data={data} align="left" verticalAlign="top" sort={false} iterations={0}
                 nodeWidth={14} nodePadding={32} node={renderNode}
-                link={{ stroke: "var(--chart-2)", strokeOpacity: 0.3 }}
+                link={{ stroke: "var(--chart-2)", strokeOpacity: 1 }}
                 margin={{ top: 24, bottom: 24, left: 16, right: 180 }}
                 accessibilityLayer
                 title="All-time Jerry no reply flows"

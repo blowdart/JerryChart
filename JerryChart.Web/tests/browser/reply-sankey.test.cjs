@@ -139,8 +139,9 @@ test("reply Sankey loads on demand, preserves all months and offers accessible c
       document.documentElement.classList.toggle("dark", theme === "dark");
       const dialog = document.querySelector("dialog");
       const links = [...document.querySelectorAll("path.recharts-sankey-link")];
+      const nodes = [...document.querySelectorAll(".recharts-sankey-nodes rect")];
       const context = document.createElement("canvas").getContext("2d");
-      if (!dialog || !context || links.length === 0) throw new Error("Cannot measure Sankey link contrast.");
+      if (!dialog || !context || links.length === 0 || nodes.length === 0) throw new Error("Cannot measure Sankey contrast.");
       const color = (value) => {
         context.clearRect(0, 0, 1, 1);
         context.fillStyle = value;
@@ -152,19 +153,38 @@ test("reply Sankey loads on demand, preserves all months and offers accessible c
         const value = channel / 255;
         return value <= 0.04045 ? value / 12.92 : ((value + 0.055) / 1.055) ** 2.4;
       }).reduce((sum, channel, index) => sum + channel * [0.2126, 0.7152, 0.0722][index], 0);
-      return links.map((link) => {
-        const style = getComputedStyle(link);
-        const stroke = color(style.stroke);
-        let opacity = Number(style.strokeOpacity) * stroke[3] / 255;
-        for (let element = link; element && element !== dialog; element = element.parentElement) {
-          opacity *= Number(getComputedStyle(element).opacity);
+      const contrast = (element, colorProperty, opacityProperty) => {
+        const style = getComputedStyle(element);
+        const foregroundColor = color(style[colorProperty]);
+        let opacity = Number(style[opacityProperty]) * foregroundColor[3] / 255;
+        for (let ancestor = element; ancestor && ancestor !== dialog; ancestor = ancestor.parentElement) {
+          opacity *= Number(getComputedStyle(ancestor).opacity);
         }
-        const foreground = stroke.map((channel, index) => channel * opacity + background[index] * (1 - opacity));
+        const foreground = foregroundColor.map((channel, index) => channel * opacity + background[index] * (1 - opacity));
         const values = [luminance(foreground), luminance(background)].sort((a, b) => b - a);
         return (values[0] + 0.05) / (values[1] + 0.05);
-      });
+      };
+      return {
+        links: links.map((link) => {
+          const ratio = contrast(link, "stroke", "strokeOpacity");
+          return ratio;
+        }),
+        nodeBoundaries: nodes.map((node) => {
+          const style = getComputedStyle(node);
+          return {
+            contrast: contrast(node, "stroke", "strokeOpacity"),
+            strokeWidth: Number.parseFloat(style.strokeWidth),
+          };
+        }),
+      };
     }, theme);
-    assert.ok(contrasts.every(ratio => ratio >= 3), `${theme} Sankey links must have at least 3:1 contrast: ${Math.min(...contrasts).toFixed(2)}:1`);
+    for (const [part, measurements] of Object.entries(contrasts)) {
+      const ratios = measurements.map(measurement => typeof measurement === "number" ? measurement : measurement.contrast);
+      if (part === "nodeBoundaries") {
+        assert.ok(measurements.every(measurement => measurement.strokeWidth > 0), `${theme} node boundaries must have a visible outline.`);
+      }
+      assert.ok(ratios.every(ratio => ratio >= 3), `${theme} Sankey ${part} must have at least 3:1 contrast: ${Math.min(...ratios).toFixed(2)}:1`);
+    }
   }
   await page.evaluate(() => document.documentElement.classList.remove("dark"));
   await page.getByText("View exact reply counts as a table", { exact: true }).click();

@@ -21,7 +21,8 @@ export function ReplySankeyChart({ flow }: { flow: ReplyFlow }) {
     const node = data.nodes[index];
     return (
       <g>
-        <rect x={x} y={y} width={width} height={height} fill={colors[node.stage]} />
+        <rect x={x} y={y} width={width} height={height} fill={colors[node.stage]}
+          stroke="var(--foreground)" strokeWidth={1.5} />
         <text x={x + width + 8} y={y + height / 2 - 3} fill="var(--foreground)"
           fontSize={12} stroke="var(--background)" strokeWidth={4} paintOrder="stroke">
           {node.name}

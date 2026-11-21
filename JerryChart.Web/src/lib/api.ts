@@ -3,6 +3,7 @@ import { isMonthlyReplySeries, type MonthlyReplyCount } from "@/lib/monthly-repl
 import { isReplyAuthorList, type TopReplyAuthor } from "@/lib/reply-authors";
 import { isBlueskyPostUri, isReplyPostList, type TopReplyPost } from "@/lib/reply-posts";
 import { isProcessingStatus, type ProcessingStatus } from "@/lib/processing-status";
+import { isReplySummary, type ReplySummary } from "@/lib/reply-flow";
 
 export async function getProcessingStatus(signal?: AbortSignal): Promise<ProcessingStatus> {
   const response = await fetch(apiUrl("/statistics/processing-status"), {
@@ -85,12 +86,6 @@ export async function getStatisticsLastUpdated(): Promise<StatisticsLastUpdated>
   return result;
 }
 
-interface ReplySummary {
-  totalReplies: number;
-  rightJerryReplies: number;
-  wrongJerryReplies: number;
-}
-
 export async function getMonthlyRightJerryReplies(): Promise<MonthlyReplyCount[]> {
   const response = await fetch(apiUrl("/statistics/right-jerry/monthly-replies"), {
     cache: "no-store",
@@ -128,24 +123,6 @@ export async function getTopRightJerryAuthors(): Promise<TopReplyAuthor[]> {
   }
 
   return authors;
-}
-
-function isCount(value: unknown): value is number {
-  return typeof value === "number" && Number.isSafeInteger(value) && value >= 0;
-}
-
-function isReplySummary(value: unknown): value is ReplySummary {
-  return (
-    typeof value === "object" &&
-    value !== null &&
-    "totalReplies" in value &&
-    isCount(value.totalReplies) &&
-    "rightJerryReplies" in value &&
-    isCount(value.rightJerryReplies) &&
-    "wrongJerryReplies" in value &&
-    isCount(value.wrongJerryReplies) &&
-    value.rightJerryReplies + value.wrongJerryReplies === value.totalReplies
-  );
 }
 
 export async function getReplySummary(): Promise<ReplySummary> {

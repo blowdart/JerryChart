@@ -76,6 +76,10 @@ public sealed partial class ApplicationTests
         ReplySummary? emptySummary = await api.GetFromJsonAsync<ReplySummary>("/statistics/reply-summary", cancellationToken);
         Assert.AreEqual(new ReplySummary(0, 0, 0), emptySummary,
             "An empty database must be queryable before the monitor creates any hits.");
+        ReplyFlow? emptyFlow = await api.GetFromJsonAsync<ReplyFlow>("/statistics/reply-flow", cancellationToken);
+        Assert.IsNotNull(emptyFlow);
+        Assert.AreEqual(new ReplySummary(0, 0, 0), emptyFlow.Summary);
+        Assert.IsEmpty(emptyFlow.Months);
         TopReplyAuthor[]? emptyAuthors = await api.GetFromJsonAsync<TopReplyAuthor[]>(
             "/statistics/right-jerry/top-authors", cancellationToken);
         Assert.IsNotNull(emptyAuthors);
@@ -136,6 +140,7 @@ public sealed partial class ApplicationTests
         await VerifyReplySummaryAsync(api, connectionString, cancellationToken);
         await VerifyTopReplyAuthorsAsync(api, connectionString, cancellationToken);
         await VerifyMonthlyRepliesAsync(api, connectionString, cancellationToken);
+        await VerifyReplyFlowAsync(api, connectionString, cancellationToken);
         await VerifyTopReplyPostsAsync(api, connectionString, cancellationToken);
         await VerifyStatisticsTimestampAsync(connectionString, cancellationToken);
         using HttpResponseMessage updatedResponse = await api.GetAsync("/statistics/last-updated", cancellationToken);
@@ -1326,6 +1331,72 @@ public sealed partial class ApplicationTests
         {
             Assert.AreEqual(apiHistory[index - 1].Month.AddMonths(1), apiHistory[index].Month);
         }
+    }
+
+    private static async Task VerifyReplyFlowAsync(HttpClient api, string connectionString,
+        CancellationToken cancellationToken)
+    {
+        var options = new MySqlConnectionStringBuilder(connectionString) { Pooling = false };
+        await using (var admin = new MySqlConnection(options.ConnectionString))
+        {
+            await admin.OpenAsync(cancellationToken);
+            await using MySqlCommand create = admin.CreateCommand();
+            create.CommandText = "CREATE DATABASE reply_flow_test";
+            await create.ExecuteNonQueryAsync(cancellationToken);
+        }
+
+        options.Database = "reply_flow_test";
+        await using MySqlDataSource dataSource = new MySqlDataSourceBuilder(options.ConnectionString).Build();
+        await using MySqlConnection connection = await dataSource.OpenConnectionAsync(cancellationToken);
+        var monitor = new MonitorStore(connection);
+        await monitor.InitializeAsync(cancellationToken);
+        var statistics = new StatisticsStore(dataSource, TimeProvider.System);
+        ReplyFlow empty = await statistics.GetReplyFlowAsync(cancellationToken);
+        Assert.AreEqual(new ReplySummary(0, 0, 0), empty.Summary);
+        Assert.IsEmpty(empty.Months);
+        await monitor.SaveHitAsync(new Hit(DateTimeOffset.UtcNow,
+            new AtUri("at://did:plc:flow/app.bsky.feed.post/wrong"), new Did("did:plc:flow"),
+            new Did("did:plc:wrongjerry"), ParentPost("did:plc:wrongjerry", "flow-wrong")), cancellationToken);
+        ReplyFlow wrongOnly = await statistics.GetReplyFlowAsync(cancellationToken);
+        Assert.AreEqual(new ReplySummary(1, 0, 1), wrongOnly.Summary);
+        Assert.IsEmpty(wrongOnly.Months);
+        DateTimeOffset[] timestamps =
+        [
+            new(2023, 12, 31, 23, 59, 59, TimeSpan.Zero),
+            new(2024, 1, 1, 0, 0, 0, TimeSpan.Zero),
+            new(2024, 2, 29, 23, 59, 59, TimeSpan.Zero),
+            new(2024, 3, 1, 1, 0, 0, TimeSpan.FromHours(2)),
+            new(2030, 6, 1, 0, 0, 0, TimeSpan.Zero)
+        ];
+        for (int index = 0; index < timestamps.Length; index++)
+        {
+            var hit = new Hit(timestamps[index], new AtUri($"at://did:plc:flow/app.bsky.feed.post/{index}"),
+                new Did("did:plc:flow"), StatisticsStore.RightJerryDid,
+                ParentPost(StatisticsStore.RightJerryDid, $"flow-parent-{index}"));
+            await monitor.SaveHitAsync(hit, cancellationToken);
+            await monitor.SaveHitAsync(hit, cancellationToken);
+        }
+
+        ReplyFlow flow = await statistics.GetReplyFlowAsync(cancellationToken);
+        Assert.AreEqual(new ReplySummary(6, 5, 1), flow.Summary);
+        Assert.AreSequenceEqual(new[]
+        {
+            new MonthlyReplyCount(new DateOnly(2023, 12, 1), 1),
+            new MonthlyReplyCount(new DateOnly(2024, 1, 1), 1),
+            new MonthlyReplyCount(new DateOnly(2024, 2, 1), 2),
+            new MonthlyReplyCount(new DateOnly(2030, 6, 1), 1)
+        }, flow.Months.ToArray());
+        Assert.AreEqual(flow.Summary.RightJerryReplies, flow.Months.Sum(month => month.ReplyCount));
+        Assert.AreEqual(await statistics.GetReplySummaryAsync(cancellationToken), flow.Summary);
+
+        using HttpResponseMessage response = await api.GetAsync("/statistics/reply-flow", cancellationToken);
+        Assert.AreEqual(HttpStatusCode.OK, response.StatusCode);
+        Assert.IsTrue(response.Headers.CacheControl?.NoStore);
+        ReplyFlow? apiFlow = await response.Content.ReadFromJsonAsync<ReplyFlow>(cancellationToken);
+        Assert.IsNotNull(apiFlow);
+        ReplySummary? apiSummary = await api.GetFromJsonAsync<ReplySummary>("/statistics/reply-summary", cancellationToken);
+        Assert.AreEqual(apiSummary, apiFlow.Summary);
+        Assert.AreEqual(apiFlow.Summary.RightJerryReplies, apiFlow.Months.Sum(month => month.ReplyCount));
     }
 
     private sealed class StatisticsClock(DateTimeOffset now) : TimeProvider

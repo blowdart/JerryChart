@@ -52,7 +52,7 @@ export function StatisticsDialog<T>({
     <button
       type="button"
       className={`${overlayTrigger ? "absolute bottom-0 right-0 z-10" : "block w-full text-left"} cursor-pointer rounded focus-visible:outline-2 focus-visible:outline-offset-4`}
-      aria-label={triggerLabel}
+      aria-label={`View More: ${triggerLabel}`}
       title={triggerLabel}
       aria-haspopup="dialog"
       onClick={() => {
@@ -62,13 +62,13 @@ export function StatisticsDialog<T>({
     >
       {overlayTrigger ? (
         <span className="flex items-center gap-1 text-xs underline underline-offset-4">
-          View details <Maximize2 aria-hidden="true" className="size-4" />
+          View More <Maximize2 aria-hidden="true" className="size-4" />
         </span>
       ) : (
         <>
           {trigger}
           <span className="mt-3 flex items-center justify-end gap-1 text-xs underline underline-offset-4">
-            View details <Maximize2 aria-hidden="true" className="size-4" />
+            View More <Maximize2 aria-hidden="true" className="size-4" />
           </span>
         </>
       )}

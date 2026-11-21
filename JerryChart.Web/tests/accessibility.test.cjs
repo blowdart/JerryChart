@@ -92,6 +92,9 @@ test("root footer links the embedded build commit or identifies a development bu
     assert.match(commitMarkup, new RegExp(`href="https://github\\.com/blowdart/JerryChart/commit/${sha}"`));
     assert.match(commitMarkup, /Build f6fde58/);
     assert.ok(commitMarkup.indexOf('aria-label="Legal"') < commitMarkup.indexOf("Get the source code on GitHub"));
+    assert.match(commitMarkup,
+      /href="https:\/\/github\.com\/blowdart\/JerryChart\/blob\/main\/JerryChart\.Web\/THIRD-PARTY-NOTICES\.txt"/);
+    assert.ok(commitMarkup.indexOf("Third-party notices") < commitMarkup.indexOf("Get the source code on GitHub"));
     assert.ok(commitMarkup.indexOf("Get the source code on GitHub") < commitMarkup.indexOf("Build f6fde58"));
 
     delete process.env.NEXT_PUBLIC_BUILD_COMMIT;
@@ -599,11 +602,12 @@ test("detail triggers stay below interactive content instead of covering its scr
   };
   const { StatisticsDialog } = loadModule("components\\statistics-dialog.tsx", { react: hooks });
   const trigger = React.createElement("div", null, "Scrollable table");
-  const tree = StatisticsDialog({
+  const props = {
     title: "All authors", triggerLabel: "Show all authors", trigger,
-    overlayTrigger: true, path: "/api/statistics/authors",
+    path: "/api/statistics/authors",
     isValid: Array.isArray, children: () => null,
-  });
+  };
+  const tree = StatisticsDialog({ ...props, overlayTrigger: true });
   const wrapper = tree.props.children[0];
   assert.equal(wrapper.props.children[0], trigger);
   assert.match(wrapper.props.className, /relative pb-7/);
@@ -612,7 +616,12 @@ test("detail triggers stay below interactive content instead of covering its scr
   assert.match(button.props.className, /absolute bottom-0 right-0/);
   assert.doesNotMatch(button.props.className, /inset-0|w-full|h-full/);
   assert.doesNotMatch(button.props.children.props.className, /absolute/);
-  assert.match(renderToStaticMarkup(button), /View details/);
+  const regularButton = StatisticsDialog(props).props.children[0];
+  for (const candidate of [button, regularButton]) {
+    const markup = renderToStaticMarkup(candidate);
+    assert.match(markup, /aria-label="View More: Show all authors"/);
+    assert.match(markup, />View More <svg/);
+  }
 });
 
 test("author tables expose keyboard-accessible scrolling with sticky headers only in the expanded list", () => {

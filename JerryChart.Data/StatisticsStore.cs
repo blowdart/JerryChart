@@ -228,6 +228,50 @@ public sealed class StatisticsStore(MySqlDataSource dataSource, TimeProvider tim
         return authors;
     }
 
+    /// <summary>Gets all recorded reply totals and right-Jerry creation months from one database snapshot.</summary>
+    /// <param name="cancellationToken">A token to cancel the database operation.</param>
+    /// <returns>The totals and nonempty UTC months, with zero totals and no months when no hits exist.</returns>
+    /// <exception cref="MySqlException">The database connection or query fails.</exception>
+    /// <exception cref="OperationCanceledException">The operation is canceled.</exception>
+    /// <exception cref="ObjectDisposedException">The data source has been disposed.</exception>
+    /// <remarks>
+    /// <para>Includes future-dated retained replies so the monthly breakdown accounts for every reply in the summary.</para>
+    /// </remarks>
+    public async Task<ReplyFlow> GetReplyFlowAsync(CancellationToken cancellationToken = default)
+    {
+        await using var connection = await dataSource.OpenConnectionAsync(cancellationToken);
+        await using var command = connection.CreateCommand();
+        command.CommandText = """
+            SELECT
+                CASE WHEN ParentAuthorDid = @rightJerry THEN YEAR(CreatedAt) END AS ReplyYear,
+                CASE WHEN ParentAuthorDid = @rightJerry THEN MONTH(CreatedAt) END AS ReplyMonth,
+                COUNT(*)
+            FROM Hits
+            GROUP BY ReplyYear, ReplyMonth
+            ORDER BY ReplyYear, ReplyMonth
+            """;
+        command.Parameters.AddWithValue("@rightJerry", RightJerryDid.ToString());
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        var months = new List<MonthlyReplyCount>();
+        long rightJerry = 0;
+        long wrongJerry = 0;
+        while (await reader.ReadAsync(cancellationToken))
+        {
+            long count = reader.GetInt64(2);
+            if (reader.IsDBNull(0))
+            {
+                wrongJerry += count;
+            }
+            else
+            {
+                months.Add(new MonthlyReplyCount(new DateOnly(reader.GetInt32(0), reader.GetInt32(1), 1), count));
+                rightJerry += count;
+            }
+        }
+
+        return new ReplyFlow(new ReplySummary(rightJerry + wrongJerry, rightJerry, wrongJerry), months);
+    }
+
     /// <summary>Gets all-time total, right-Jerry, and wrong-Jerry reply counts from one database snapshot.</summary>
     /// <param name="cancellationToken">A token to cancel the database operation.</param>
     /// <returns>The summary, with zero counts when no hits exist.</returns>

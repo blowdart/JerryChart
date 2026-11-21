@@ -12,6 +12,7 @@ namespace JerryChart.Api;
 
 [JsonSourceGenerationOptions(JsonSerializerDefaults.Web)]
 [JsonSerializable(typeof(ReplySummary))]
+[JsonSerializable(typeof(ReplyFlow))]
 [JsonSerializable(typeof(StatisticsLastUpdated))]
 [JsonSerializable(typeof(ProcessingStatus))]
 [JsonSerializable(typeof(IReadOnlyList<TopReplyAuthor>))]

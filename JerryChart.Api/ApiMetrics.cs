@@ -17,6 +17,7 @@ namespace JerryChart.Api;
 internal enum StatisticsReport
 {
     Summary,
+    ReplyFlow,
     LastUpdated,
     ProcessingStatus,
     TopAuthors,

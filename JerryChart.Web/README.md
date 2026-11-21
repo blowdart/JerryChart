@@ -7,6 +7,24 @@ connection configuration.
 The frontend renders Jerry no summaries, top reply authors, and monthly reply
 charts through server components. `API_BASE_URL` is supplied by Aspire and never exposed to the
 browser. MySQL is accessible only through the .NET API.
+
+The reply summary table's **View More** control, with the same expand glyph as
+the other reports, opens an all-time Sankey diagram. All replies split into
+The Right Jerry and The Wrong Jerry; right-Jerry replies split into UTC years,
+then each year into its months. The wrong-Jerry branch ends at that category.
+The diagram and its data load only when opened, and closing removes the loaded
+chart. Reopening fetches a fresh snapshot through `/api/statistics/reply-flow`.
+The summary and monthly counts come from one database query, so every link
+conserves its count even while ingestion continues. Unlike the history chart's
+present-time cutoff, this report includes every retained reply, including
+future-dated posts. Empty months have no flow and are omitted. The chart scrolls
+on small screens and provides an expandable table of exact counts.
+
+The footer links to the current `THIRD-PARTY-NOTICES.txt` on GitHub, not to a
+build-specific commit. The notices cover directly declared frontend and .NET
+dependencies, copied artwork, generated components, and fonts. Refresh them
+when these inputs change.
+
 The last-detected timestamp tracks only matching replies directly to Jerry Chen
 and links to that reply on Bluesky when its AT URI is available. Replies to other
 accounts still contribute to the separate wrong-Jerry counter, but never advance

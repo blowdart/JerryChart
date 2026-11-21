@@ -33,6 +33,7 @@
     <File Path="Directory.Build.props" />
     <File Path="Directory.Packages.props" />
     <File Path="global.json" />
+    <File Path="JerryChart.Web/THIRD-PARTY-NOTICES.txt" />
     <File Path="LICENSE" />
     <File Path="nuget.config" />
     <File Path="README.md" />

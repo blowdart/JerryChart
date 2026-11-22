@@ -20,10 +20,10 @@ present-time cutoff, this report includes every retained reply, including
 future-dated posts. Empty months have no flow and are omitted. The chart scrolls
 on small screens and provides an expandable table of exact counts.
 
-The footer links to the current `THIRD-PARTY-NOTICES.txt` on GitHub, not to a
-build-specific commit. The notices cover directly declared frontend and .NET
-dependencies, copied artwork, generated components, and fonts. Refresh them
-when these inputs change.
+The footer links to the current repository-root `THIRD-PARTY-NOTICES.txt` on
+GitHub, not to a build-specific commit. The notices cover directly declared
+frontend and .NET dependencies, copied artwork, generated components, and fonts.
+Refresh them when these inputs change.
 
 The last-detected timestamp tracks only matching replies directly to Jerry Chen
 and links to that reply on Bluesky when its AT URI is available. Replies to other
@@ -100,8 +100,8 @@ Profile hover cards display Bluesky's verification badge beside the name only
 when the public profile reports a valid verified status. A domain handle or
 trusted-verifier status alone does not grant this badge. Profiles use the existing
 15-minute cache; verification changes appear when the profile is fetched again
-after expiry. Badge artwork is from Bluesky's MIT-licensed client; see
-`THIRD-PARTY-NOTICES.txt`.
+after expiry. Badge artwork is from Bluesky's MIT-licensed client; see the
+repository-root `THIRD-PARTY-NOTICES.txt`.
 
 Profile descriptions link explicit HTTP/HTTPS URLs and bare domains with public
 top-level suffixes using `linkify-it` and `tlds`. Bare domains open over HTTPS;

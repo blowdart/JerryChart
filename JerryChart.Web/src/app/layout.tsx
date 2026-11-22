@@ -63,7 +63,7 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
             <Link href="/privacy" className="underline underline-offset-4">Privacy policy</Link>
           </nav>
           <p className="mb-2">
-            <a href="https://github.com/blowdart/JerryChart/blob/main/JerryChart.Web/THIRD-PARTY-NOTICES.txt"
+            <a href="https://github.com/blowdart/JerryChart/blob/main/THIRD-PARTY-NOTICES.txt"
               className="underline underline-offset-4">
               Third-party notices
             </a>

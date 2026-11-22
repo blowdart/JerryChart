@@ -93,7 +93,7 @@ test("root footer links the embedded build commit or identifies a development bu
     assert.match(commitMarkup, /Build f6fde58/);
     assert.ok(commitMarkup.indexOf('aria-label="Legal"') < commitMarkup.indexOf("Get the source code on GitHub"));
     assert.match(commitMarkup,
-      /href="https:\/\/github\.com\/blowdart\/JerryChart\/blob\/main\/JerryChart\.Web\/THIRD-PARTY-NOTICES\.txt"/);
+      /href="https:\/\/github\.com\/blowdart\/JerryChart\/blob\/main\/THIRD-PARTY-NOTICES\.txt"/);
     assert.ok(commitMarkup.indexOf("Third-party notices") < commitMarkup.indexOf("Get the source code on GitHub"));
     assert.ok(commitMarkup.indexOf("Get the source code on GitHub") < commitMarkup.indexOf("Build f6fde58"));
 

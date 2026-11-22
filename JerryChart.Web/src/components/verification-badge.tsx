@@ -1,5 +1,5 @@
 // Artwork: bluesky-social/social-app assets/icons/brands/VerifiedCheck.svg.
-// MIT license and copyright notice: THIRD-PARTY-NOTICES.txt.
+// MIT license and copyright notice: repository-root THIRD-PARTY-NOTICES.txt.
 export function VerificationBadge() {
   return (
     <svg role="img" aria-label="Verified account" className="size-4 shrink-0 text-[#0085ff]" viewBox="0 0 24 24" fill="none">

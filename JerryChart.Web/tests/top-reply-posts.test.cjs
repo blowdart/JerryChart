@@ -52,6 +52,88 @@ const publicPost = (key, text) => ({ uri: uri(key), author: { did: rightJerryDid
 const response = (body, status = 200) => new Response(JSON.stringify(body), { status });
 const settle = () => new Promise((resolve) => setImmediate(resolve));
 
+test("all-time reply flow conserves counts through Jerry, UTC year, and distinct months", () => {
+  const { buildReplyFlowData, isReplyFlow } = load("lib\\reply-flow.ts");
+  const flow = {
+    summary: { totalReplies: 17, rightJerryReplies: 12, wrongJerryReplies: 5 },
+    months: [
+      { month: "2023-12-01", replyCount: 2 },
+      { month: "2024-01-01", replyCount: 3 },
+      { month: "2024-02-01", replyCount: 6 },
+      { month: "2030-01-01", replyCount: 1 },
+    ],
+  };
+  assert.ok(isReplyFlow(flow), "All years, including future-dated retained records, must be counted.");
+  const { nodes, links } = buildReplyFlowData(flow);
+  const flows = links.map(link => [nodes[link.source].name, nodes[link.target].name, link.value]);
+  assert.deepEqual(flows, [
+    ["All replies", "The Right Jerry", 12], ["All replies", "The Wrong Jerry", 5],
+    ["The Right Jerry", "2023", 2], ["2023", "December 2023", 2],
+    ["The Right Jerry", "2024", 9], ["2024", "January 2024", 3], ["2024", "February 2024", 6],
+    ["The Right Jerry", "2030", 1], ["2030", "January 2030", 1],
+  ]);
+  for (const [index, node] of nodes.entries()) {
+    const incoming = links.filter(link => link.target === index).reduce((sum, link) => sum + link.value, 0);
+    const outgoing = links.filter(link => link.source === index).reduce((sum, link) => sum + link.value, 0);
+    if (index !== 0) assert.equal(incoming, node.count);
+    if (outgoing > 0) assert.equal(outgoing, node.count);
+  }
+  for (const summary of [
+    { totalReplies: 0, rightJerryReplies: 0, wrongJerryReplies: 0 },
+    { totalReplies: 7, rightJerryReplies: 0, wrongJerryReplies: 7 },
+  ]) {
+    const data = { summary, months: [] };
+    assert.ok(isReplyFlow(data));
+    assert.ok(buildReplyFlowData(data).links.every(link => link.value > 0));
+  }
+  for (const invalid of [
+    { ...flow, summary: { ...flow.summary, totalReplies: 18 } },
+    { ...flow, months: flow.months.slice(1) },
+    { ...flow, months: [...flow.months, flow.months[0]] },
+    { ...flow, months: [...flow.months].reverse() },
+    { ...flow, months: [{ month: "2024-13-01", replyCount: 12 }] },
+    { ...flow, months: [{ month: "2024-01-01", replyCount: -1 }] },
+    { ...flow, summary: { totalReplies: 2 ** 53, rightJerryReplies: 2 ** 53, wrongJerryReplies: 0 } },
+  ]) assert.equal(isReplyFlow(invalid), false);
+});
+
+test("reply flow proxy rejects inconsistent totals and preserves no-store and cancellation", async (context) => {
+  const originalBase = process.env.API_BASE_URL;
+  const originalError = console.error;
+  process.env.API_BASE_URL = "http://private-api.example";
+  console.error = () => {};
+  context.after(() => {
+    console.error = originalError;
+    if (originalBase === undefined) delete process.env.API_BASE_URL;
+    else process.env.API_BASE_URL = originalBase;
+  });
+  let body = {
+    summary: { totalReplies: 3, rightJerryReplies: 2, wrongJerryReplies: 1 },
+    months: [{ month: "2024-02-01", replyCount: 2 }],
+  };
+  let status = 200;
+  replaceFetch(context, async (url, options) => {
+    assert.equal(url.href, "http://private-api.example/statistics/reply-flow");
+    assert.equal(options.cache, "no-store");
+    assert.ok(options.signal instanceof AbortSignal);
+    if (options.signal.aborted) throw options.signal.reason;
+    return response(body, status);
+  });
+  const { GET } = load("app\\api\\statistics\\reply-flow\\route.ts");
+  const request = new Request("http://localhost/api/statistics/reply-flow");
+  const success = await GET(request);
+  assert.equal(success.status, 200);
+  assert.equal(success.headers.get("Cache-Control"), "no-store");
+  assert.deepEqual(await success.json(), body);
+  body = { ...body, months: [] };
+  assert.equal((await GET(request)).status, 502);
+  status = 503;
+  assert.equal((await GET(request)).status, 502);
+  const controller = new AbortController();
+  controller.abort();
+  assert.equal((await GET(new Request(request.url, { signal: controller.signal }))).status, 499);
+});
+
 test("social card generates a 1200 by 630 PNG without the statistics API", async () => {
   const { default: SocialImage, size, alt, contentType } = modules()("app\\opengraph-image.tsx");
   assert.deepEqual(size, { width: 1200, height: 630 });

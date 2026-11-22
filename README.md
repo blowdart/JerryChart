@@ -1099,6 +1099,7 @@ Use the API endpoint from the dashboard (Aspire assigns endpoints at runtime).
 | Method | Path | Result |
 | --- | --- | --- |
 | GET | `/statistics/reply-summary` | All-time `totalReplies`, `rightJerryReplies`, and `wrongJerryReplies` counts |
+| GET | `/statistics/reply-flow` | No-store `{ summary, months }`: all reply totals and nonempty right-Jerry UTC creation months from one database snapshot, including retained future-dated replies |
 | GET | `/statistics/last-updated` | `{ updatedAt, atUri }`: UTC ISO timestamp of the last new hit and its matching reply AT URI; either may be null when unavailable |
 | GET | `/statistics/processing-status` | No-store monitor/backfill/handle-updater activity, heartbeat freshness, all-Hits parent-URI counts, and aggregate handle refresh schedule eligibility |
 | GET | `/statistics/right-jerry/top-authors` | Up to ten authors: `did`, nullable current `handle`, and `replyCount` |

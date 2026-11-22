@@ -31,6 +31,16 @@ app.MapGet("/statistics/reply-summary", async (StatisticsStore store, Cancellati
     TypedResults.Ok(await ApiMetrics.QueryAsync(StatisticsReport.Summary,
         () => store.GetReplySummaryAsync(cancellationToken), cancellationToken)));
 
+app.MapGet("/statistics/reply-flow", async (StatisticsStore store, HttpContext context,
+    CancellationToken cancellationToken) =>
+{
+    context.Response.Headers.CacheControl = "no-store";
+    return TypedResults.Ok(await ApiMetrics.QueryAsync(StatisticsReport.ReplyFlow,
+        () => store.GetReplyFlowAsync(cancellationToken), cancellationToken, result => result.Months.Count));
+})
+    .WithName("GetReplyFlow")
+    .WithSummary("Gets all-time reply totals and right-Jerry replies by UTC creation month.");
+
 app.MapGet("/statistics/last-updated", async (StatisticsStore store, CancellationToken cancellationToken) =>
     TypedResults.Ok(await ApiMetrics.QueryAsync(StatisticsReport.LastUpdated,
         () => store.GetLastUpdatedAsync(cancellationToken), cancellationToken)));

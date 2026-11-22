@@ -17,6 +17,7 @@ import {
 } from "@/components/ui/table";
 import { ReplyHistoryDialog } from "@/components/reply-history-dialog";
 import { ReplyAuthorsDialog } from "@/components/reply-authors-dialog";
+import { ReplyFlowDialog } from "@/components/reply-flow-dialog";
 import { TopReplyPosts } from "@/components/top-reply-posts";
 import { getInitialProcessingStatus, getMonthlyRightJerryReplies, getReplySummary, getStatisticsLastUpdated, getTopRightJerryAuthors, getTopRightJerryPosts } from "@/lib/api";
 import { rightJerryDid } from "@/lib/reply-posts";
@@ -56,6 +57,7 @@ export default async function Home() {
       </header>
       <Card>
         <CardContent>
+          <ReplyFlowDialog>
           <Table aria-label="Jerry no reply summary">
             <TableHeader>
               <TableRow>
@@ -78,6 +80,7 @@ export default async function Home() {
               </TableRow>
             </TableBody>
           </Table>
+          </ReplyFlowDialog>
         </CardContent>
       </Card>
       <TopReplyPosts posts={topPosts} />
